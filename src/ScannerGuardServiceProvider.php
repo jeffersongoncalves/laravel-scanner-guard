@@ -6,6 +6,7 @@ namespace JeffersonGoncalves\ScannerGuard;
 
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Route;
+use JeffersonGoncalves\ScannerGuard\Console\Commands\AggregateAndPruneCommand;
 use JeffersonGoncalves\ScannerGuard\Console\Commands\ExportDenylistCommand;
 use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
 use Spatie\LaravelPackageTools\Package;
@@ -19,7 +20,11 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
             ->name('laravel-scanner-guard')
             ->hasConfigFile('scanner-guard')
             ->hasMigration('create_scanner_guard_bans_table')
-            ->hasCommand(ExportDenylistCommand::class);
+            ->hasMigration('create_scanner_guard_ban_daily_stats_table')
+            ->hasCommands([
+                ExportDenylistCommand::class,
+                AggregateAndPruneCommand::class,
+            ]);
     }
 
     public function packageRegistered(): void
@@ -35,14 +40,16 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
         // yourself (see the README).
         Route::aliasMiddleware('scanner-guard', BlockScannerRequests::class);
 
-        if (! config('scanner-guard.sync_to_nginx', false)) {
-            return;
-        }
-
         $this->app->booted(function (): void {
-            $this->app->make(Schedule::class)
-                ->command(ExportDenylistCommand::class)
-                ->daily();
+            $schedule = $this->app->make(Schedule::class);
+
+            if (config('scanner-guard.sync_to_nginx', false)) {
+                $schedule->command(ExportDenylistCommand::class)->daily();
+            }
+
+            if (config('scanner-guard.auto_prune', true)) {
+                $schedule->command(AggregateAndPruneCommand::class)->daily();
+            }
         });
     }
 }
