@@ -134,6 +134,25 @@ Nothing schedules this automatically unless you opt in via `scanner-guard.sync_t
 because writing files to disk on a schedule is far more deployment-specific (permissions, shared
 vs. per-instance storage, whether nginx actually reloads the file) than a DB-only aggregate job.
 
+### Aggregating and pruning
+
+`scanner_guard_bans` keeps growing as long as scanner traffic keeps hitting the app. To bound it,
+`scanner-guard:aggregate-and-prune` folds each day's **expired** bans into a
+`scanner_guard_ban_daily_stats` row (`bans_count`, `hits_total`, `reason_stats`, `top_matched_values`
+— all JSON/aggregate columns, no per-IP data), then deletes ban rows older than
+`scanner-guard.retention_days` (default 90). Still-active bans (`expires_at` in the future) are never
+touched by either step.
+
+```bash
+php artisan scanner-guard:aggregate-and-prune
+# or backfill a specific day:
+php artisan scanner-guard:aggregate-and-prune --date=2026-01-15
+```
+
+Self-schedules daily unless you opt out via `scanner-guard.auto_prune = false` (env
+`SCANNER_GUARD_AUTO_PRUNE`) — on by default, since (unlike `sync_to_nginx`) writing to the DB has no
+deployment-specific footgun.
+
 #### Privacy tradeoff
 
 `scanner_guard_bans` only ever stores a salted hash of the IP (`ip_hash`, via
@@ -171,6 +190,9 @@ return [
     'store' => null,
     'response_status' => 404,
     'sync_to_nginx' => false,
+    'daily_stats_table' => 'scanner_guard_ban_daily_stats',
+    'retention_days' => 90,
+    'auto_prune' => true,
 ];
 ```
 

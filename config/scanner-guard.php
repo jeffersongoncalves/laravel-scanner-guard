@@ -158,4 +158,40 @@ return [
     */
     'sync_to_nginx' => env('SCANNER_GUARD_SYNC_TO_NGINX', false),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Daily Stats Table
+    |--------------------------------------------------------------------------
+    |
+    | Name of the table scanner-guard:aggregate-and-prune folds each day's
+    | expired bans into before pruning them.
+    |
+    */
+    'daily_stats_table' => env('SCANNER_GUARD_DAILY_STATS_TABLE', 'scanner_guard_ban_daily_stats'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Retention
+    |--------------------------------------------------------------------------
+    |
+    | Expired ban rows older than this many days are pruned by
+    | scanner-guard:aggregate-and-prune after being folded into
+    | daily_stats_table. Separate from ban_duration, which controls how long
+    | a ban stays active, not how long its audit row survives after expiring.
+    |
+    */
+    'retention_days' => env('SCANNER_GUARD_RETENTION_DAYS', 90),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Auto Prune
+    |--------------------------------------------------------------------------
+    |
+    | When true, self-schedules scanner-guard:aggregate-and-prune daily so
+    | scanner_guard_bans doesn't grow unbounded. On by default: unlike
+    | sync_to_nginx, writing to the DB has no deployment-specific footgun.
+    |
+    */
+    'auto_prune' => env('SCANNER_GUARD_AUTO_PRUNE', true),
+
 ];

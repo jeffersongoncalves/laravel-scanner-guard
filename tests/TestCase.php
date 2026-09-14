@@ -45,6 +45,10 @@ abstract class TestCase extends Orchestra
             __DIR__.'/../database/migrations/create_scanner_guard_bans_table.php.stub',
             $tempPath.'/0001_01_01_000000_create_scanner_guard_bans_table.php'
         );
+        copy(
+            __DIR__.'/../database/migrations/create_scanner_guard_ban_daily_stats_table.php.stub',
+            $tempPath.'/0001_01_01_000001_create_scanner_guard_ban_daily_stats_table.php'
+        );
 
         $this->loadMigrationsFrom($tempPath);
     }
