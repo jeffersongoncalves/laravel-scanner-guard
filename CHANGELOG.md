@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.1.0 - 2026-09-14
+
+### What's New
+
+- `scanner-guard:aggregate-and-prune` command: folds each day's expired bans into a new `scanner_guard_ban_daily_stats` table (bans_count, hits_total, reason_stats, top_matched_values), then prunes raw ban rows past `scanner-guard.retention_days` (default 90). Still-active bans are never touched.
+- Self-schedules daily via new `scanner-guard.auto_prune` config (default true, env `SCANNER_GUARD_AUTO_PRUNE`).
+
+Closes #2
+
 ## 1.0.0 - 2026-09-13
 
 Initial release.
