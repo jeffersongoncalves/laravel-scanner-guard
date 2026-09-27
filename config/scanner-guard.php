@@ -163,8 +163,10 @@ return [
     | Daily Stats Table
     |--------------------------------------------------------------------------
     |
-    | Name of the table scanner-guard:aggregate-and-prune folds each day's
-    | expired bans into before pruning them.
+    | One row per day, keyed by the day each ban was created. Counters are
+    | bumped at ban time and reconciled daily by
+    | scanner-guard:aggregate-and-prune, so the history survives purges,
+    | unbans and pruning of the ban rows.
     |
     */
     'daily_stats_table' => env('SCANNER_GUARD_DAILY_STATS_TABLE', 'scanner_guard_ban_daily_stats'),
@@ -181,6 +183,19 @@ return [
     |
     */
     'retention_days' => env('SCANNER_GUARD_RETENTION_DAYS', 90),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Purge Expired After Days
+    |--------------------------------------------------------------------------
+    |
+    | scanner-guard:aggregate-and-prune deletes bans that expired at least
+    | this many days ago (0 = on the next run), once their day is recorded
+    | in daily_stats_table. Set to null to keep expired rows until
+    | retention_days instead.
+    |
+    */
+    'purge_expired_after_days' => env('SCANNER_GUARD_PURGE_EXPIRED_AFTER_DAYS', 0),
 
     /*
     |--------------------------------------------------------------------------
