@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.2.0 - 2026-09-27
+
+### What's New
+
+- Daily ban stats are now recorded at ban time, keyed by the day the ban was **created** (`banned_at`) instead of the day it expired. The history survives purges, unbans and retention pruning.
+- `scanner-guard:aggregate-and-prune` reconciles every day from the oldest remaining ban up to yesterday (`max(existing, recomputed)`, never lowering a counter), so days skipped by the scheduler are backfilled.
+- Expired bans are purged automatically once their day is recorded — new `scanner-guard.purge_expired_after_days` config (default `0` = next run, `null` disables, env `SCANNER_GUARD_PURGE_EXPIRED_AFTER_DAYS`).
+- New `ScannerGuard::dailyStats(int $days = 14)` reader: one zero-filled entry per day, today live.
+- New `--rebuild` option to overwrite stats from the remaining ban rows.
+
+### Upgrading
+
+Stats written by earlier releases are keyed by expiry day. Run once right after upgrading, before the scheduled run purges expired bans:
+
+```bash
+php artisan scanner-guard:aggregate-and-prune --rebuild
+
+```
+Closes #8
+
 ## 1.1.0 - 2026-09-14
 
 ### What's New
