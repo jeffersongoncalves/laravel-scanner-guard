@@ -136,18 +136,40 @@ vs. per-instance storage, whether nginx actually reloads the file) than a DB-onl
 
 ### Aggregating and pruning
 
-`scanner_guard_bans` keeps growing as long as scanner traffic keeps hitting the app. To bound it,
-`scanner-guard:aggregate-and-prune` folds each day's **expired** bans into a
-`scanner_guard_ban_daily_stats` row (`bans_count`, `hits_total`, `reason_stats`, `top_matched_values`
-— all JSON/aggregate columns, no per-IP data), then deletes ban rows older than
-`scanner-guard.retention_days` (default 90). Still-active bans (`expires_at` in the future) are never
-touched by either step.
+Every ban bumps a `scanner_guard_ban_daily_stats` row for the day it was **created** (`bans_count`,
+`hits_total`, `reason_stats`, `top_matched_values` — aggregate columns only, no per-IP data). The
+history is recorded at ban time, so it survives any later delete of the ban row: purge, unban or
+retention prune.
+
+`scanner-guard:aggregate-and-prune` then, in order:
+
+1. reconciles every day from the oldest remaining ban up to yesterday against the ban rows still
+   present — filling days the ban-time counter missed, never lowering a counter (`max(existing,
+   recomputed)`, since deleted rows can't be recounted);
+2. purges expired bans once their day is recorded, after `scanner-guard.purge_expired_after_days`
+   (default `0` = next run; `null` disables);
+3. deletes ban rows expired more than `scanner-guard.retention_days` (default 90) ago.
+
+Still-active bans are never purged or pruned.
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune
-# or backfill a specific day:
+# reconcile from a specific day:
 php artisan scanner-guard:aggregate-and-prune --date=2026-01-15
+# overwrite the stats from the remaining ban rows instead of keeping the higher value:
+php artisan scanner-guard:aggregate-and-prune --rebuild
 ```
+
+Read the history (one entry per day, zero-filled, today live):
+
+```php
+ScannerGuard::dailyStats(14); // Collection of ['date', 'bans_count', 'hits_total', 'reason_stats', 'top_matched_values']
+```
+
+> **Upgrading:** releases before this change keyed stats rows by the day a ban *expired* (one day
+> late with the default `ban_duration`). Run `php artisan scanner-guard:aggregate-and-prune --rebuild`
+> once right after upgrading — before the scheduled run purges the expired rows — to rebuild those
+> days by `banned_at`.
 
 Self-schedules daily unless you opt out via `scanner-guard.auto_prune = false` (env
 `SCANNER_GUARD_AUTO_PRUNE`) — on by default, since (unlike `sync_to_nginx`) writing to the DB has no
@@ -192,6 +214,7 @@ return [
     'sync_to_nginx' => false,
     'daily_stats_table' => 'scanner_guard_ban_daily_stats',
     'retention_days' => 90,
+    'purge_expired_after_days' => 0,
     'auto_prune' => true,
 ];
 ```

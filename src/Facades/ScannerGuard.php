@@ -15,6 +15,9 @@ use Illuminate\Support\Facades\Facade;
  * @method static int registerHit(string $ip)
  * @method static \JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan ban(string $ip, string $reason, string $matchedValue, int $hitCount, string|null $path = null)
  * @method static string|null rawIpFor(string $ipHash)
+ * @method static \Illuminate\Support\Collection<int, array{date: string, bans_count: int, hits_total: int, reason_stats: array<string, int>, top_matched_values: array<string, int>}> dailyStats(int $days = 14)
+ * @method static void mergeDailyStats(string $date, array $stats, callable $combine)
+ * @method static string dailyStatsTable()
  *
  * @see \JeffersonGoncalves\ScannerGuard\ScannerGuard
  */
