@@ -33,8 +33,9 @@ it('counts a ban on its banned_at day at ban time', function () {
 
     expect((int) $row->bans_count)->toBe(2)
         ->and((int) $row->hits_total)->toBe(4)
-        ->and(json_decode((string) $row->reason_stats, true))->toBe([ScannerGuardBan::REASON_SCANNER_PATH => 1, ScannerGuardBan::REASON_ASN => 1])
-        ->and(json_decode((string) $row->top_matched_values, true))->toBe(['wp-admin*' => 3, 'AS16276' => 1])
+        // toEqual: MySQL's JSON type doesn't preserve key order.
+        ->and(json_decode((string) $row->reason_stats, true))->toEqual([ScannerGuardBan::REASON_SCANNER_PATH => 1, ScannerGuardBan::REASON_ASN => 1])
+        ->and(json_decode((string) $row->top_matched_values, true))->toEqual(['wp-admin*' => 3, 'AS16276' => 1])
         ->and(statsRow(now()->addDay()->toDateString()))->toBeNull();
 });
 
@@ -138,6 +139,7 @@ it('reconciles from --date', function () {
 
 it('reads a zero-filled daily history with today live', function () {
     app(ScannerGuard::class)->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+    app(ScannerGuard::class)->ban('5.6.7.8', ScannerGuardBan::REASON_SCANNER_PATH, 'xmlrpc.php', 5);
 
     $stats = app(ScannerGuard::class)->dailyStats(3);
 
@@ -147,6 +149,7 @@ it('reads a zero-filled daily history with today live', function () {
             now()->subDay()->toDateString(),
             now()->toDateString(),
         ])
-        ->and($stats->pluck('bans_count')->all())->toBe([0, 0, 1])
-        ->and($stats->last()['reason_stats'])->toBe([ScannerGuardBan::REASON_SCANNER_PATH => 1]);
+        ->and($stats->pluck('bans_count')->all())->toBe([0, 0, 2])
+        ->and($stats->last()['reason_stats'])->toBe([ScannerGuardBan::REASON_SCANNER_PATH => 2])
+        ->and($stats->last()['top_matched_values'])->toBe(['xmlrpc.php' => 5, 'wp-admin*' => 3]);
 });

@@ -222,8 +222,6 @@ class ScannerGuard
                     $existing[$key] = $combine($existing[$key] ?? 0, $value);
                 }
 
-                arsort($existing);
-
                 return $existing;
             };
 
@@ -262,11 +260,16 @@ class ScannerGuard
     }
 
     /**
+     * Sorted highest first on read: MySQL's JSON type doesn't keep key order.
+     *
      * @return array<string, int>
      */
     protected function decodeCounts(?string $json): array
     {
-        return array_map('intval', (array) json_decode((string) $json, true));
+        $counts = array_map('intval', (array) json_decode((string) $json, true));
+        arsort($counts);
+
+        return $counts;
     }
 
     protected function banKey(string $hash): string
