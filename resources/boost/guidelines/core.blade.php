@@ -44,7 +44,11 @@ use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
   effect when that package's `geoip.driver` is `ip_api` or `maxmind` (not the default `headers`).
 - **Plain 404 response**: `response_status` defaults to 404, not 403 — a banned scanner can't tell
   it's banned versus the route never existing.
-- **Audit trail**: every ban writes a `ScannerGuardBan` row (hashed IP only, never raw).
+- **Audit trail**: every ban writes a `ScannerGuardBan` row (hashed IP only, never raw) with the
+  default `database` driver.
+- **No-database drivers**: `driver` = `cache` (cache-only bans) or `http` (forward bans to a central
+  app over HMAC-signed requests; that app enables `http.server.enabled`). Migrations, stats and the
+  nginx export are `database`-only.
 - **nginx export**: `php artisan scanner-guard:export-denylist` writes active bans as `deny <ip>;`
   lines, best-effort (see the package README's "Privacy tradeoff" section for why this can't be
   100% reliable by design — it needs a cached raw IP, not the permanent hashed record).
@@ -56,6 +60,7 @@ use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
 // config/scanner-guard.php
 return [
     'enabled' => true,
+    'driver' => 'database', // database | http | cache
     'scanner_paths' => ['wp-admin*', 'wp-login*', 'xmlrpc.php', '*.git/config', /* ... */],
     'ban_threshold' => 3,
     'ban_window' => 300,

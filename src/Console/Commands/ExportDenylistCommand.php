@@ -23,6 +23,12 @@ class ExportDenylistCommand extends Command
 
     public function handle(ScannerGuard $scannerGuard): int
     {
+        if ($scannerGuard->driver() !== 'database') {
+            $this->warn('Skipped: scanner-guard:export-denylist requires the "database" driver.');
+
+            return self::SUCCESS;
+        }
+
         $bans = ScannerGuardBan::query()->active()->get();
 
         $lines = [];
