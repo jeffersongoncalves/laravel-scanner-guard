@@ -29,9 +29,6 @@ class RecordForwardedBanController
             403
         );
 
-        // A signature is only ever accepted once inside its tolerance window.
-        abort_unless($scannerGuard->cache()->add("scanner-guard:nonce:{$signature}", true, $tolerance * 2), 409);
-
         $data = $request->validate([
             'ip' => ['required', 'ip'],
             'reason' => ['required', 'string', 'max:30'],
@@ -40,6 +37,10 @@ class RecordForwardedBanController
             'banned_at' => ['required', 'date'],
             'expires_at' => ['required', 'date', 'after:banned_at'],
         ]);
+
+        // A signature is only ever accepted once inside its tolerance window
+        // (consumed after validation, so a rejected payload can be resent).
+        abort_unless($scannerGuard->cache()->add("scanner-guard:nonce:{$signature}", true, $tolerance * 2), 409);
 
         $scannerGuard->recordForwardedBan(
             $data['ip'],

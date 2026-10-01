@@ -148,12 +148,10 @@ class ScannerGuard
         $bannedAt = now();
         $expiresAt = $bannedAt->copy()->addSeconds((int) config('scanner-guard.ban_duration', 86400));
 
-        $this->cacheBan($ip, $expiresAt);
-        $this->cache()->forget($this->hitsKey($this->hashIp($ip)));
-
-        $ban = match ($this->driver()) {
-            'database' => $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt),
-            'http' => $this->forwardBan([
+        // Resolved before any cache write, so a bad driver fails without a half-applied ban.
+        $persist = match ($this->driver()) {
+            'database' => fn (): ScannerGuardBan => $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt),
+            'http' => fn () => $this->forwardBan([
                 'ip' => $ip,
                 'reason' => $reason,
                 'matched_value' => $matchedValue,
@@ -162,9 +160,14 @@ class ScannerGuard
                 'banned_at' => $bannedAt->toIso8601String(),
                 'expires_at' => $expiresAt->toIso8601String(),
             ]),
-            'cache' => null,
+            'cache' => fn () => null,
             default => throw new InvalidArgumentException("Unsupported scanner-guard driver [{$this->driver()}]."),
         };
+
+        $this->cacheBan($ip, $expiresAt);
+        $this->cache()->forget($this->hitsKey($this->hashIp($ip)));
+
+        $ban = $persist();
 
         Log::warning('scanner-guard: banned ip', array_filter([
             'ip' => $ip,

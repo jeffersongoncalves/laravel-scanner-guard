@@ -134,6 +134,23 @@ it('rejects forwarded bans with a bad signature, a stale timestamp or a replay',
     expect(ScannerGuardBan::query()->count())->toBe(1);
 });
 
+it('rejects an unknown driver before touching the cache', function () {
+    config(['scanner-guard.driver' => 'redis']);
+
+    expect(fn () => $this->scannerGuard->ban('10.20.0.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3))
+        ->toThrow(InvalidArgumentException::class);
+    expect($this->scannerGuard->isBanned('10.20.0.4'))->toBeFalse();
+});
+
+it('does not consume the signature of a payload that fails validation', function () {
+    enableServerRoute();
+
+    $signed = signedBan($this->scannerGuard, ['ip' => 'not-an-ip']);
+
+    postBan($signed)->assertUnprocessable();
+    postBan($signed)->assertUnprocessable();
+});
+
 it('does not register the receiving route unless enabled', function () {
     postBan(signedBan($this->scannerGuard))->assertNotFound();
 });
@@ -147,14 +164,16 @@ it('skips the database-only commands and schedule for other drivers', function (
     putenv('SCANNER_GUARD_DRIVER=cache');
     $_ENV['SCANNER_GUARD_DRIVER'] = 'cache';
 
-    $this->refreshApplication();
+    try {
+        $this->refreshApplication();
 
-    $event = collect(app(Schedule::class)->events())->first(
-        fn ($event) => str_contains($event->command ?? '', 'scanner-guard:')
-    );
+        $event = collect(app(Schedule::class)->events())->first(
+            fn ($event) => str_contains($event->command ?? '', 'scanner-guard:')
+        );
 
-    expect($event)->toBeNull();
-
-    putenv('SCANNER_GUARD_DRIVER');
-    unset($_ENV['SCANNER_GUARD_DRIVER']);
+        expect($event)->toBeNull();
+    } finally {
+        putenv('SCANNER_GUARD_DRIVER');
+        unset($_ENV['SCANNER_GUARD_DRIVER']);
+    }
 });
