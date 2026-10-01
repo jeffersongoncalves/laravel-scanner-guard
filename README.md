@@ -16,6 +16,8 @@ Detects and bans vulnerability-scanner traffic on Laravel apps: WordPress/CMS/cr
 `.git`/config leaks, phpMyAdmin, and similar noise get counted per IP and banned after a threshold,
 with optional hard-blocking by ASN via
 [`jeffersongoncalves/laravel-visitor-fingerprint`](https://github.com/jeffersongoncalves/laravel-visitor-fingerprint).
+A SQL database is optional: bans can also live in the cache only, or be forwarded to a central app
+over HMAC-signed requests (see [Running without a database](#running-without-a-database)).
 
 ## What this package does — and does not — handle
 
@@ -105,8 +107,9 @@ is empty (the default), the GeoIP driver is never even resolved — zero added l
 
 ### Manual review
 
-Every ban writes a row to `scanner_guard_bans` (`reason`, `matched_value`, `hit_count`,
-`banned_at`, `expires_at`) — a permanent, privacy-safe audit trail:
+With the default `database` driver, every ban writes a row to `scanner_guard_bans` (`reason`,
+`matched_value`, `hit_count`, `banned_at`, `expires_at`) — a permanent, privacy-safe audit trail
+(with the `http` driver, it lives on the central app):
 
 ```php
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
