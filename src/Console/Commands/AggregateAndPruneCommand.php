@@ -31,6 +31,12 @@ class AggregateAndPruneCommand extends Command
 
     public function handle(ScannerGuard $scannerGuard): int
     {
+        if ($scannerGuard->driver() !== 'database') {
+            $this->warn('Skipped: scanner-guard:aggregate-and-prune requires the "database" driver.');
+
+            return self::SUCCESS;
+        }
+
         $yesterday = Carbon::yesterday();
         $start = $this->option('date')
             ? Carbon::parse((string) $this->option('date'))->startOfDay()

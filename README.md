@@ -57,6 +57,9 @@ php artisan vendor:publish --tag="scanner-guard-config"
 php artisan migrate
 ```
 
+The migrations are only needed for the default `database` driver — see
+[Running without a database](#running-without-a-database).
+
 ## Usage
 
 The package registers a `scanner-guard` route middleware alias but does **not** attach it to any
@@ -195,12 +198,65 @@ hash). The nginx denylist is best-effort and may lag or miss entries after a cac
 rely heavily on the nginx export, prefer a durable cache store (`redis`, `file`) over `array` via
 `scanner-guard.store`.
 
+### Running without a database
+
+Hit counting and the ban fast-path always run on the cache store; only the audit trail, daily
+stats, nginx export and the `isBanned()` DB fallback need SQL. Pick where bans go with
+`scanner-guard.driver` (env `SCANNER_GUARD_DRIVER`):
+
+| Driver | Bans stored in | Audit trail / stats / nginx export | Needs migrations |
+|---|---|---|---|
+| `database` (default) | cache + `scanner_guard_bans` | yes | yes |
+| `http` | cache, forwarded to a central app | on the central app | no |
+| `cache` | cache only, TTL = `ban_duration` | no | no |
+
+With `http` or `cache`, a ban doesn't survive a cache flush, `ScannerGuard::ban()` returns `null`,
+and `aggregate-and-prune` / `export-denylist` are neither scheduled nor run (they print a skip
+notice).
+
+#### `http`: one central app for many satellites
+
+On each satellite (no database):
+
+```dotenv
+SCANNER_GUARD_DRIVER=http
+SCANNER_GUARD_HTTP_URL=https://central.example.com/scanner-guard/bans
+SCANNER_GUARD_HTTP_SECRET=a-long-random-shared-secret
+```
+
+On the central app (`database` driver, migrations run):
+
+```dotenv
+SCANNER_GUARD_HTTP_SERVER_ENABLED=true
+SCANNER_GUARD_HTTP_SECRET=a-long-random-shared-secret
+# optional, default scanner-guard/bans:
+SCANNER_GUARD_HTTP_SERVER_PATH=scanner-guard/bans
+```
+
+Each ban is POSTed as JSON (`ip`, `reason`, `matched_value`, `hit_count`, `path`, `banned_at`,
+`expires_at`) with `X-Timestamp` and `X-Signature: hash_hmac('sha256', timestamp.body, secret)`.
+The central app rejects bad signatures and timestamps outside `http.tolerance` (default 300s) with
+`403`, and a replayed signature with `409`. It then records the ban exactly like a local one: its
+own salted `ip_hash` in the table, daily stats, and the raw IP in cache only — so its nginx export
+covers every satellite.
+
+The satellite sends the request after the response (`defer()`), with `http.timeout` (default 2s);
+a failure is logged and never affects the request or the local (cache) ban.
+
 ## Configuration
 
 ```php
 // config/scanner-guard.php
 return [
     'enabled' => true,
+    'driver' => 'database', // database | http | cache
+    'http' => [
+        'url' => null,
+        'secret' => null,
+        'timeout' => 2,
+        'tolerance' => 300,
+        'server' => ['enabled' => false, 'path' => 'scanner-guard/bans'],
+    ],
     'table' => 'scanner_guard_bans',
     'scanner_paths' => [
         'wp-admin*', 'wp-login*', 'xmlrpc.php', '*.git/config', '*phpmyadmin*', /* ... */

@@ -17,6 +17,52 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Driver
+    |--------------------------------------------------------------------------
+    |
+    | Where bans are persisted:
+    |
+    | - "database": audit rows + daily stats in SQL (needs the migrations).
+    | - "http": bans stay in the cache store and are forwarded to a central
+    |   app (running the "database" driver with http.server.enabled) over
+    |   an HMAC-signed request. No SQL database needed here.
+    | - "cache": bans live only in the cache store for ban_duration. No
+    |   audit trail, stats, nginx export or survival of a cache flush.
+    |
+    | aggregate-and-prune and export-denylist only run with "database".
+    |
+    */
+    'driver' => env('SCANNER_GUARD_DRIVER', 'database'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | HTTP Driver
+    |--------------------------------------------------------------------------
+    |
+    | Client side (driver = "http"): url + secret of the central app. The
+    | call is sent after the response, with a short timeout; failures are
+    | logged and never affect the request.
+    |
+    | Server side (central app): enable the route that receives forwarded
+    | bans. Requests are signed with
+    | hash_hmac('sha256', X-Timestamp.body, secret), rejected outside
+    | `tolerance` seconds and never accepted twice.
+    |
+    */
+    'http' => [
+        'url' => env('SCANNER_GUARD_HTTP_URL'),
+        'secret' => env('SCANNER_GUARD_HTTP_SECRET'),
+        'timeout' => env('SCANNER_GUARD_HTTP_TIMEOUT', 2),
+        'tolerance' => env('SCANNER_GUARD_HTTP_TOLERANCE', 300),
+
+        'server' => [
+            'enabled' => env('SCANNER_GUARD_HTTP_SERVER_ENABLED', false),
+            'path' => env('SCANNER_GUARD_HTTP_SERVER_PATH', 'scanner-guard/bans'),
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Table
     |--------------------------------------------------------------------------
     */

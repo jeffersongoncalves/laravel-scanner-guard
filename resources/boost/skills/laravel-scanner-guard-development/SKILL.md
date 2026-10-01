@@ -103,7 +103,7 @@ durable store (`redis`/`file`) if the nginx export matters to you.
 
 ### `ScannerGuard::isBanned(string $ip): bool`
 
-Cache-first, DB-fallback check. Re-hydrates cache on a DB hit.
+Cache-first; DB fallback (re-hydrating the cache) only with the `database` driver.
 
 ### `ScannerGuard::matchScannerPath(string $path): ?string`
 
@@ -113,12 +113,19 @@ Returns the matched `fnmatch()` pattern, or `null`.
 
 Increments and returns the rolling hit counter (TTL = `ban_window`).
 
-### `ScannerGuard::ban(string $ip, string $reason, string $matchedValue, int $hitCount, ?string $path = null): ScannerGuardBan`
+### `ScannerGuard::ban(string $ip, string $reason, string $matchedValue, int $hitCount, ?string $path = null): ?ScannerGuardBan`
 
-Writes the cache ban + raw-IP cache entry + the permanent DB row, and logs a WARNING-level
+Writes the cache ban + raw-IP cache entry, then per `scanner-guard.driver`: the permanent DB row
+(`database`, returned), an HMAC-signed POST to `http.url` after the response (`http`, returns
+`null`) or nothing more (`cache`, returns `null`). Always logs a WARNING-level
 `scanner-guard: banned ip` line (includes the raw IP — this log line is the one deliberate
 exception to "never log a raw IP" in this ecosystem, since it's operational security telemetry, not
 persisted user data).
+
+### `ScannerGuard::recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt): ScannerGuardBan`
+
+Central-app side of the `http` driver (behind the `http.server.enabled` route): records the ban
+like a local one, hashing the IP with this app's salt.
 
 ### `ScannerGuard::rawIpFor(string $ipHash): ?string`
 

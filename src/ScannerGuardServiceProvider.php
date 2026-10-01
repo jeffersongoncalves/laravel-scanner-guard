@@ -8,6 +8,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Route;
 use JeffersonGoncalves\ScannerGuard\Console\Commands\AggregateAndPruneCommand;
 use JeffersonGoncalves\ScannerGuard\Console\Commands\ExportDenylistCommand;
+use JeffersonGoncalves\ScannerGuard\Http\Controllers\RecordForwardedBanController;
 use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
@@ -40,7 +41,18 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
         // yourself (see the README).
         Route::aliasMiddleware('scanner-guard', BlockScannerRequests::class);
 
+        if (config('scanner-guard.http.server.enabled', false)) {
+            Route::post(config('scanner-guard.http.server.path', 'scanner-guard/bans'), RecordForwardedBanController::class)
+                ->name('scanner-guard.bans.store');
+        }
+
         $this->app->booted(function (): void {
+            // Both jobs work on the ban/stats tables, which only the
+            // database driver has.
+            if (config('scanner-guard.driver', 'database') !== 'database') {
+                return;
+            }
+
             $schedule = $this->app->make(Schedule::class);
 
             if (config('scanner-guard.sync_to_nginx', false)) {
