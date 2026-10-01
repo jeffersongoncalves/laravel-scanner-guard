@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.3.0 - 2026-10-01
+
+### What's New
+
+The package no longer requires a SQL database. New `scanner-guard.driver` config (env `SCANNER_GUARD_DRIVER`):
+
+- **`database`** (default): unchanged behavior, audit rows + daily stats in SQL.
+- **`cache`**: bans live only in the cache store for `ban_duration`. No audit trail, stats or nginx export, no migrations needed.
+- **`http`**: bans stay in the local cache and are forwarded (after the response, short timeout, failures only logged) to a central app over an HMAC-signed request: `X-Signature: hash_hmac('sha256', X-Timestamp.body, secret)`.
+
+Central app: set `SCANNER_GUARD_HTTP_SERVER_ENABLED=true` to register `POST scanner-guard/bans`. It rejects bad signatures and stale timestamps (403) and replays (409), then records the ban like a local one (its own salted `ip_hash`, daily stats, raw IP in cache only), so its nginx export covers every satellite.
+
+`scanner-guard:aggregate-and-prune` and `scanner-guard:export-denylist` are not scheduled, and skip with a notice, unless the driver is `database`.
+
+### Upgrading
+
+No action needed for the default `database` driver. `ScannerGuard::ban()` now returns `?ScannerGuardBan` (`null` for `cache`/`http`). If you published the config, add the new `driver` and `http` keys (see README > Running without a database).
+
+Closes #12
+
 ## 1.2.0 - 2026-09-27
 
 ### What's New
@@ -18,6 +38,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 ```
 Closes #8
