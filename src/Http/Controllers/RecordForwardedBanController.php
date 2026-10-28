@@ -36,6 +36,7 @@ class RecordForwardedBanController
             'hit_count' => ['required', 'integer', 'min:1'],
             'banned_at' => ['required', 'date'],
             'expires_at' => ['required', 'date', 'after:banned_at'],
+            'offense' => ['nullable', 'integer', 'min:1', 'max:65535'],
         ]);
 
         // A signature is only ever accepted once inside its tolerance window
@@ -50,6 +51,7 @@ class RecordForwardedBanController
             // Satellites may run another timezone; store in ours.
             Carbon::parse($data['banned_at'])->setTimezone(config('app.timezone')),
             Carbon::parse($data['expires_at'])->setTimezone(config('app.timezone')),
+            isset($data['offense']) ? (int) $data['offense'] : null,
         );
 
         return response()->noContent(201);

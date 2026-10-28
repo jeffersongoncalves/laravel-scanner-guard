@@ -22,6 +22,7 @@ use Illuminate\Support\Carbon;
  * @property int $hit_count
  * @property Carbon $banned_at
  * @property Carbon $expires_at
+ * @property int|null $offense escalation step (1 = first offense), null when the ban didn't escalate
  * @property-read bool $is_active
  *
  * @method static \Illuminate\Database\Eloquent\Builder<static> active()
@@ -43,10 +44,12 @@ class ScannerGuardBan extends Model
         'hit_count',
         'banned_at',
         'expires_at',
+        'offense',
     ];
 
     protected $casts = [
         'hit_count' => 'integer',
+        'offense' => 'integer',
         'banned_at' => 'datetime',
         'expires_at' => 'datetime',
     ];

@@ -109,6 +109,35 @@ URLs too, attach it globally or add a catch-all route. `Route::fallback()` only 
 Route::any('{any}', fn () => abort(404))->where('any', '.*')->fallback()->middleware('scanner-guard');
 ```
 
+### Escalating bans for repeat offenders
+
+By default every ban lasts `ban_duration`, so a scanner that comes back the day after its ban
+expires just gets another day. Opt into an escalation ladder (seconds per offense; the last step
+repeats):
+
+```php
+// config/scanner-guard.php
+'escalation' => [86400, 604800, 1209600, 2592000, 7776000], // 1d → 7d → 14d → 30d → 90d
+'escalation_lookback_days' => 365, // env SCANNER_GUARD_ESCALATION_LOOKBACK_DAYS
+'escalation_reasons' => [ScannerGuardBan::REASON_SCANNER_PATH, ScannerGuardBan::REASON_NOT_FOUND_FLOOD],
+```
+
+A ban is offense N+1 when the same IP had a ban numbered N for one of `escalation_reasons` within
+`escalation_lookback_days`. Reasons outside that list (e.g. `asn_blocklist`) keep `ban_duration`
+and don't count as prior offenses. The offense number is stored on the ban row (`offense`) and
+logged with the ban.
+
+- **`database`**: run the `add_offense_to_scanner_guard_bans_table` migration (published with the
+  others; existing installs: re-publish and `php artisan migrate`).
+- **`cache` / `http`**: the count lives in a cache entry (`scanner-guard:offenses:{hash}`, TTL =
+  lookback), so a cache flush resets it to the first step. With `http`, the satellite decides the
+  escalation and forwards `offense` and `expires_at`; the central app stores them as-is.
+
+> **Retention:** with escalation on, `aggregate-and-prune` keeps each IP's latest escalated ban
+> inside the lookback (older/duplicate expired rows are still purged), and prunes only rows past
+> `max(retention_days, escalation_lookback_days)`. Without that row the next ban would start over at
+> the first step — so this is why ban rows can outlive `retention_days`.
+
 ### ASN blocklisting
 
 Some traffic is worth blocking outright, no path match needed. A production analysis of this
@@ -176,7 +205,8 @@ retention prune.
    (default `0` = next run; `null` disables);
 3. deletes ban rows expired more than `scanner-guard.retention_days` (default 90) ago.
 
-Still-active bans are never purged or pruned.
+Still-active bans are never purged or pruned. With [escalation](#escalating-bans-for-repeat-offenders)
+on, each IP's latest escalated ban inside the lookback is kept too.
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune
@@ -257,7 +287,7 @@ SCANNER_GUARD_HTTP_SERVER_PATH=scanner-guard/bans
 ```
 
 Each ban is POSTed as JSON (`ip`, `reason`, `matched_value`, `hit_count`, `path`, `banned_at`,
-`expires_at`) with `X-Timestamp` and `X-Signature: hash_hmac('sha256', timestamp.body, secret)`.
+`expires_at`, `offense`) with `X-Timestamp` and `X-Signature: hash_hmac('sha256', timestamp.body, secret)`.
 The central app rejects bad signatures and timestamps outside `http.tolerance` (default 300s) with
 `403`, and a replayed signature with `409`. It then records the ban exactly like a local one: its
 own salted `ip_hash` in the table, daily stats, and the raw IP in cache only — so its nginx export
@@ -287,6 +317,11 @@ return [
     'ban_threshold' => 3,
     'ban_window' => 300,
     'ban_duration' => 86400,
+    'escalation' => [], // e.g. [86400, 604800, 1209600, 2592000, 7776000]
+    'escalation_lookback_days' => 365,
+    'escalation_reasons' => ['scanner_path', 'not_found_flood'],
+    'not_found_threshold' => null,
+    'not_found_window' => 60,
     'asn_blocklist' => [],
     'store' => null,
     'response_status' => 404,

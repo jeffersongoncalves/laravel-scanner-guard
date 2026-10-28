@@ -155,11 +155,13 @@ class ScannerGuard
     public function ban(string $ip, string $reason, string $matchedValue, int $hitCount, ?string $path = null): ?ScannerGuardBan
     {
         $bannedAt = now();
-        $expiresAt = $bannedAt->copy()->addSeconds((int) config('scanner-guard.ban_duration', 86400));
+        $offense = $this->nextOffense($this->hashIp($ip), $reason);
+        $expiresAt = $bannedAt->copy()->addSeconds($this->banDuration($offense));
 
         // Resolved before any cache write, so a bad driver fails without a half-applied ban.
         $persist = match ($this->driver()) {
-            'database' => fn (): ScannerGuardBan => $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt),
+            'database' => fn (): ScannerGuardBan => $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense),
+            // The satellite decides the escalation; the central app stores its offense as-is.
             'http' => fn () => $this->forwardBan([
                 'ip' => $ip,
                 'reason' => $reason,
@@ -168,6 +170,7 @@ class ScannerGuard
                 'path' => $path,
                 'banned_at' => $bannedAt->toIso8601String(),
                 'expires_at' => $expiresAt->toIso8601String(),
+                'offense' => $offense,
             ]),
             'cache' => fn () => null,
             default => throw new InvalidArgumentException("Unsupported scanner-guard driver [{$this->driver()}]."),
@@ -186,6 +189,7 @@ class ScannerGuard
             'matched_value' => $matchedValue,
             'hit_count' => $hitCount,
             'expires_at' => $expiresAt->toIso8601String(),
+            'offense' => $offense,
         ], fn ($value) => $value !== null));
 
         return $ban;
@@ -195,11 +199,70 @@ class ScannerGuard
      * Receiving side of the http driver: records a ban forwarded by a
      * satellite app exactly like a local one, raw IP kept in cache only.
      */
-    public function recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt): ScannerGuardBan
+    public function recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null): ScannerGuardBan
     {
         $this->cacheBan($ip, $expiresAt);
 
-        return $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt);
+        return $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense);
+    }
+
+    public function escalationEnabled(): bool
+    {
+        return (array) config('scanner-guard.escalation', []) !== [];
+    }
+
+    public function escalationLookbackDays(): int
+    {
+        return (int) config('scanner-guard.escalation_lookback_days', 365);
+    }
+
+    /**
+     * @return int|null 1 for a first offense, or null when this ban doesn't escalate
+     */
+    protected function nextOffense(string $hash, string $reason): ?int
+    {
+        $reasons = (array) config('scanner-guard.escalation_reasons', []);
+
+        if (! $this->escalationEnabled() || ! in_array($reason, $reasons, true)) {
+            return null;
+        }
+
+        $lookback = $this->escalationLookbackDays();
+
+        return match ($this->driver()) {
+            'database' => (int) ScannerGuardBan::query()
+                ->where('ip_hash', $hash)
+                ->whereIn('reason', $reasons)
+                ->where('banned_at', '>=', now()->subDays($lookback))
+                ->max('offense') + 1,
+            'cache', 'http' => $this->bumpOffenses($hash, $lookback),
+            default => null, // ban() rejects the driver before any write
+        };
+    }
+
+    /**
+     * Best effort: the counter is gone after a cache flush. TTL restarts at
+     * every ban, so the lookback runs from the latest one, like the
+     * database lookup.
+     */
+    protected function bumpOffenses(string $hash, int $lookbackDays): int
+    {
+        // ponytail: get+put isn't atomic; two bans of one IP at the same instant only lose a step.
+        $offense = (int) $this->cache()->get($this->offensesKey($hash)) + 1;
+        $this->cache()->put($this->offensesKey($hash), $offense, now()->addDays($lookbackDays));
+
+        return $offense;
+    }
+
+    protected function banDuration(?int $offense): int
+    {
+        if ($offense === null) {
+            return (int) config('scanner-guard.ban_duration', 86400);
+        }
+
+        $steps = array_values((array) config('scanner-guard.escalation'));
+
+        return (int) $steps[min($offense, count($steps)) - 1];
     }
 
     /**
@@ -300,16 +363,18 @@ class ScannerGuard
         $this->cache()->put($this->rawIpKey($hash), $ip, $expiresAt);
     }
 
-    protected function storeBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt): ScannerGuardBan
+    protected function storeBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null): ScannerGuardBan
     {
-        $ban = ScannerGuardBan::query()->create([
+        // offense only when set, so apps that never ran the add_offense migration keep working.
+        $ban = ScannerGuardBan::query()->create(array_filter([
             'ip_hash' => $this->hashIp($ip),
             'reason' => $reason,
             'matched_value' => $matchedValue,
             'hit_count' => $hitCount,
             'banned_at' => $bannedAt,
             'expires_at' => $expiresAt,
-        ]);
+            'offense' => $offense,
+        ], fn ($value) => $value !== null));
 
         $this->recordDailyStats($ban);
 
@@ -390,6 +455,11 @@ class ScannerGuard
     protected function notFoundKey(string $hash): string
     {
         return "scanner-guard:not-found:{$hash}";
+    }
+
+    protected function offensesKey(string $hash): string
+    {
+        return "scanner-guard:offenses:{$hash}";
     }
 
     protected function rawIpKey(string $hash): string

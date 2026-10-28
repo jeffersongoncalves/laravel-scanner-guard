@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
+
 return [
 
     /*
@@ -145,6 +147,34 @@ return [
     'ban_window' => env('SCANNER_GUARD_BAN_WINDOW', 300),
 
     'ban_duration' => env('SCANNER_GUARD_BAN_DURATION', 86400),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Escalation
+    |--------------------------------------------------------------------------
+    |
+    | Opt-in. Ban duration in seconds per offense (1st, 2nd, 3rd, ...); past
+    | the last step the last entry repeats. An offense counts when the same
+    | IP had a ban for one of `escalation_reasons` within
+    | `escalation_lookback_days`. Empty (default) = off: every ban lasts
+    | ban_duration. E.g. 1d → 7d → 14d → 30d → 90d:
+    |
+    |   [86400, 604800, 1209600, 2592000, 7776000]
+    |
+    | Needs the add_offense migration with the "database" driver. With
+    | "cache"/"http" the count lives in the cache store and resets on a
+    | cache flush. With escalation on, aggregate-and-prune keeps each IP's
+    | latest ban inside the lookback, so shortening retention can't erase it.
+    |
+    */
+    'escalation' => [],
+
+    'escalation_lookback_days' => env('SCANNER_GUARD_ESCALATION_LOOKBACK_DAYS', 365),
+
+    'escalation_reasons' => [
+        ScannerGuardBan::REASON_SCANNER_PATH,
+        ScannerGuardBan::REASON_NOT_FOUND_FLOOD,
+    ],
 
     /*
     |--------------------------------------------------------------------------

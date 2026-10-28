@@ -119,6 +119,23 @@ it('records a signed forwarded ban on the central app', function () {
     expect($this->scannerGuard->dailyStats(1)->last()['bans_count'])->toBe(1);
 });
 
+it('forwards the satellite offense and stores it on the central app', function () {
+    config(['scanner-guard.driver' => 'http', 'scanner-guard.escalation' => [86400, 604800]]);
+    Http::fake();
+    $this->withoutDefer();
+
+    $this->scannerGuard->ban('10.20.0.5', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+
+    Http::assertSent(fn (Request $request): bool => $request['offense'] === 1);
+
+    config(['scanner-guard.driver' => 'database']);
+    enableServerRoute();
+
+    postBan(signedBan($this->scannerGuard, ['offense' => 3]))->assertCreated();
+
+    expect(ScannerGuardBan::query()->sole()->offense)->toBe(3);
+});
+
 it('rejects forwarded bans with a bad signature, a stale timestamp or a replay', function () {
     enableServerRoute();
 

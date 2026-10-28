@@ -113,6 +113,27 @@ it('keeps expired bans when purging is disabled, pruning only past retention', f
         ->and((int) statsRow(now()->subDays(90)->toDateString())->bans_count)->toBe(1);
 });
 
+it('keeps each ip\'s latest in-lookback escalated ban when escalation is on', function () {
+    config(['scanner-guard.escalation' => [86400, 604800], 'scanner-guard.retention_days' => 90]);
+
+    rawBan(['ip_hash' => 'a', 'offense' => 1, 'banned_at' => now()->subDays(300), 'expires_at' => now()->subDays(299)]);
+    $latest = rawBan(['ip_hash' => 'a', 'offense' => 2, 'banned_at' => now()->subDays(200), 'expires_at' => now()->subDays(193)]);
+    rawBan(['ip_hash' => 'b', 'offense' => 1, 'banned_at' => now()->subDays(400), 'expires_at' => now()->subDays(399)]);
+    rawBan(['ip_hash' => 'c', 'reason' => ScannerGuardBan::REASON_ASN, 'banned_at' => now()->subDays(2), 'expires_at' => now()->subDay()]);
+
+    $this->artisan('scanner-guard:aggregate-and-prune')->assertExitCode(0);
+
+    expect(ScannerGuardBan::query()->pluck('id')->all())->toBe([$latest->id]);
+});
+
+it('purges escalated bans as before when escalation is off', function () {
+    rawBan(['ip_hash' => 'a', 'offense' => 2, 'banned_at' => now()->subDays(20), 'expires_at' => now()->subDays(13)]);
+
+    $this->artisan('scanner-guard:aggregate-and-prune')->assertExitCode(0);
+
+    expect(ScannerGuardBan::query()->count())->toBe(0);
+});
+
 it('rebuilds stats keyed by the old expiry day with --rebuild', function () {
     DB::table('scanner_guard_ban_daily_stats')->insert([
         'date' => now()->subDay()->toDateString(),
