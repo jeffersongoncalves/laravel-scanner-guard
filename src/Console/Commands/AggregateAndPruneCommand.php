@@ -49,8 +49,8 @@ class AggregateAndPruneCommand extends Command
         }
 
         $this->reconcile($scannerGuard, $start, $yesterday);
-        $this->purgeExpired();
-        $this->prune();
+        $this->purgeExpired($scannerGuard);
+        $this->prune($scannerGuard);
 
         return self::SUCCESS;
     }
@@ -93,9 +93,11 @@ class AggregateAndPruneCommand extends Command
 
     /**
      * Only bans from days already reconciled (before today) — today's are
-     * counted live and reconciled by tomorrow's run.
+     * counted live and reconciled by tomorrow's run. With escalation on, each
+     * IP's latest escalated ban inside the lookback stays: it carries the
+     * offense number the next ban builds on.
      */
-    protected function purgeExpired(): void
+    protected function purgeExpired(ScannerGuard $scannerGuard): void
     {
         $days = config('scanner-guard.purge_expired_after_days', 0);
 
@@ -106,13 +108,28 @@ class AggregateAndPruneCommand extends Command
         ScannerGuardBan::query()
             ->where('expires_at', '<=', now()->subDays((int) $days))
             ->where('banned_at', '<', Carbon::today())
+            ->when($scannerGuard->escalationEnabled(), fn ($query) => $query->whereNotIn('id', DB::query()->fromSub(
+                // Wrapped in a derived table: MySQL rejects a subquery on the table being deleted from.
+                ScannerGuardBan::query()
+                    ->selectRaw('max(id) as id')
+                    ->whereNotNull('offense')
+                    ->where('banned_at', '>=', now()->subDays($scannerGuard->escalationLookbackDays()))
+                    ->groupBy('ip_hash'),
+                'latest_offenses'
+            )->select('id')))
             ->delete();
     }
 
-    protected function prune(): void
+    protected function prune(ScannerGuard $scannerGuard): void
     {
+        $days = (int) config('scanner-guard.retention_days', 90);
+
+        if ($scannerGuard->escalationEnabled()) {
+            $days = max($days, $scannerGuard->escalationLookbackDays());
+        }
+
         ScannerGuardBan::query()
-            ->where('expires_at', '<', now()->subDays((int) config('scanner-guard.retention_days', 90)))
+            ->where('expires_at', '<', now()->subDays($days))
             ->delete();
     }
 }
