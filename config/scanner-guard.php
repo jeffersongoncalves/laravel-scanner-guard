@@ -226,6 +226,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Negative Cache TTL
+    |--------------------------------------------------------------------------
+    |
+    | Seconds a "not banned" answer from the database fallback stays cached,
+    | so non-banned traffic doesn't cost a query per request. A ban written
+    | through ban() on a shared cache takes effect immediately; a ban only
+    | visible in the database (e.g. after a cache flush on another node)
+    | takes up to this long. 0 disables it.
+    |
+    */
+    'negative_cache_ttl' => env('SCANNER_GUARD_NEGATIVE_CACHE_TTL', 60),
+
+    /*
+    |--------------------------------------------------------------------------
     | Response Status
     |--------------------------------------------------------------------------
     |

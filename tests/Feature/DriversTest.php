@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
@@ -73,6 +74,19 @@ it('keeps cache-driver bans in the cache only, with no database writes', functio
     Cache::flush();
 
     expect($this->scannerGuard->isBanned($ip))->toBeFalse();
+});
+
+it('caches a database miss so non-banned ips skip the query, and ban() overrides it', function () {
+    $ip = '10.20.0.6';
+
+    DB::enableQueryLog();
+    expect($this->scannerGuard->isBanned($ip))->toBeFalse();
+    expect($this->scannerGuard->isBanned($ip))->toBeFalse();
+    expect(DB::getQueryLog())->toHaveCount(1);
+
+    $this->scannerGuard->ban($ip, ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+
+    expect($this->scannerGuard->isBanned($ip))->toBeTrue();
 });
 
 it('forwards http-driver bans with a valid hmac signature after the response', function () {

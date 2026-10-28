@@ -58,14 +58,17 @@ class ScannerGuard
      * Cheap fast path: cache lookup first. With the database driver, falls
      * back to a DB check so a cache flush doesn't silently lift a
      * still-active ban — and re-hydrates the cache entry when it does, so
-     * the fallback only ever runs once per ban per cache flush.
+     * the fallback only ever runs once per ban per cache flush. A miss is
+     * cached as false for negative_cache_ttl seconds so non-banned traffic
+     * doesn't hit the database on every request; ban() overwrites it.
      */
     public function isBanned(string $ip): bool
     {
         $hash = $this->hashIp($ip);
+        $cached = $this->cache()->get($this->banKey($hash));
 
-        if ($this->cache()->get($this->banKey($hash))) {
-            return true;
+        if ($cached !== null) {
+            return (bool) $cached;
         }
 
         if ($this->driver() !== 'database') {
@@ -79,6 +82,8 @@ class ScannerGuard
             ->first();
 
         if (! $ban) {
+            $this->cache()->put($this->banKey($hash), false, (int) config('scanner-guard.negative_cache_ttl', 60));
+
             return false;
         }
 
