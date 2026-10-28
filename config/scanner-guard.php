@@ -148,6 +148,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | 404 Flood
+    |--------------------------------------------------------------------------
+    |
+    | Opt-in. Bans an IP after `not_found_threshold` 404 responses within
+    | `not_found_window` seconds, catching scanners probing for software
+    | `scanner_paths` doesn't list. Null (default) = off. Keep the threshold
+    | high (e.g. 20 in 60s): a visitor following a few dead links never gets
+    | near it, a scanner fires dozens per minute. The 404 that trips it is
+    | still served normally; the ban applies from the next request.
+    |
+    */
+    'not_found_threshold' => env('SCANNER_GUARD_NOT_FOUND_THRESHOLD'),
+
+    'not_found_window' => env('SCANNER_GUARD_NOT_FOUND_WINDOW', 60),
+
+    /*
+    |--------------------------------------------------------------------------
     | ASN Blocklist
     |--------------------------------------------------------------------------
     |

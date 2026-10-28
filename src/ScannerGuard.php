@@ -129,10 +129,20 @@ class ScannerGuard
      */
     public function registerHit(string $ip): int
     {
-        $hash = $this->hashIp($ip);
-        $key = $this->hitsKey($hash);
-        $window = (int) config('scanner-guard.ban_window', 300);
+        return $this->increment($this->hitsKey($this->hashIp($ip)), (int) config('scanner-guard.ban_window', 300));
+    }
 
+    /**
+     * Same as registerHit(), but for the opt-in 404-flood counter
+     * (TTL = not_found_window).
+     */
+    public function registerNotFoundHit(string $ip): int
+    {
+        return $this->increment($this->notFoundKey($this->hashIp($ip)), (int) config('scanner-guard.not_found_window', 60));
+    }
+
+    protected function increment(string $key, int $window): int
+    {
         if (! $this->cache()->has($key)) {
             $this->cache()->put($key, 0, $window);
         }
@@ -166,6 +176,7 @@ class ScannerGuard
 
         $this->cacheBan($ip, $expiresAt);
         $this->cache()->forget($this->hitsKey($this->hashIp($ip)));
+        $this->cache()->forget($this->notFoundKey($this->hashIp($ip)));
 
         $ban = $persist();
 
@@ -375,6 +386,11 @@ class ScannerGuard
     protected function hitsKey(string $hash): string
     {
         return "scanner-guard:hits:{$hash}";
+    }
+
+    protected function notFoundKey(string $hash): string
+    {
+        return "scanner-guard:not-found:{$hash}";
     }
 
     protected function rawIpKey(string $hash): string
