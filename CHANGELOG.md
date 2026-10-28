@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.5.0 - 2026-10-28
+
+### Added
+
+- Opt-in escalating ban duration for repeat offenders (#18, #19). Set `scanner-guard.escalation` to a ladder of seconds per offense, e.g. `[86400, 604800, 1209600, 2592000, 7776000]` (1d → 7d → 14d → 30d → 90d; the last step repeats). Configure it with `escalation_lookback_days` (default 365) and `escalation_reasons` (default `scanner_path`, `not_found_flood`).
+- New nullable `offense` column on `scanner_guard_bans`. It is also included in the ban log and in the `http` driver payload.
+- `cache`/`http` drivers track offenses in a cache counter (best effort, resets on a cache flush).
+
+### Changed
+
+- While escalation is on, `scanner-guard:aggregate-and-prune` keeps each IP's latest escalated ban inside the lookback and prunes only past `max(retention_days, escalation_lookback_days)`.
+
+### Upgrading
+
+Re-publish the migrations and migrate to add the `offense` column. You only need it to enable escalation with the `database` driver:
+
+```bash
+php artisan vendor:publish --tag="scanner-guard-migrations"
+php artisan migrate
+
+```
 ## 1.4.0 - 2026-10-28
 
 ### Added
@@ -52,6 +73,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
