@@ -89,6 +89,26 @@ counter; after `ban_threshold` hits within `ban_window` seconds, the IP is banne
 deliberately indistinguishable from "route doesn't exist", so a scanner can't tell it got banned
 and adjust its behavior).
 
+### 404 flood
+
+`scanner_paths` only catches software it names. To also ban scanners probing for anything else
+(MediaWiki `images/thumb/...`, random `index.php/<id>` paths), opt into the 404-flood rule:
+
+```dotenv
+SCANNER_GUARD_NOT_FOUND_THRESHOLD=20
+SCANNER_GUARD_NOT_FOUND_WINDOW=60
+```
+
+An IP that gets `not_found_threshold` 404 responses within `not_found_window` seconds is banned
+with reason `not_found_flood`. The 404 that trips it is served normally; the ban applies from the
+next request. Only 404s produced by routes the middleware runs on are counted. To count unmatched
+URLs too, attach it globally or add a catch-all route. `Route::fallback()` only matches GET/HEAD
+(other methods to an unknown URL get a 405 and aren't counted), so for every method use:
+
+```php
+Route::any('{any}', fn () => abort(404))->where('any', '.*')->fallback()->middleware('scanner-guard');
+```
+
 ### ASN blocklisting
 
 Some traffic is worth blocking outright, no path match needed. A production analysis of this

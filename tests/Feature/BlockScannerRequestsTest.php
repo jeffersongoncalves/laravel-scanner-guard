@@ -11,6 +11,7 @@ use JeffersonGoncalves\VisitorFingerprint\Data\GeoLocation;
 beforeEach(function () {
     Route::get('/wp-admin', fn () => 'ok')->middleware('scanner-guard');
     Route::get('/hello', fn () => 'ok')->middleware('scanner-guard');
+    Route::fallback(fn () => abort(404))->middleware('scanner-guard');
 
     config(['scanner-guard.ban_threshold' => 3]);
 });
@@ -74,6 +75,37 @@ it('does not resolve the geoip driver at all when the asn blocklist is empty', f
 
     $this->withServerVariables(['REMOTE_ADDR' => '10.0.0.5'])->get('/hello')->assertOk();
 });
+
+it('bans an ip that racks up not_found_threshold 404s, from the next request on', function () {
+    config(['scanner-guard.not_found_threshold' => 20]);
+    $ip = '10.0.0.7';
+
+    foreach (range(1, 20) as $i) {
+        $this->withServerVariables(['REMOTE_ADDR' => $ip])->get("/missing/{$i}")->assertNotFound();
+    }
+
+    $ban = ScannerGuardBan::query()->sole();
+    expect($ban->reason)->toBe(ScannerGuardBan::REASON_NOT_FOUND_FLOOD);
+    expect($ban->hit_count)->toBe(20);
+
+    $this->withServerVariables(['REMOTE_ADDR' => $ip])->get('/hello')->assertNotFound();
+    expect(ScannerGuardBan::query()->count())->toBe(1);
+});
+
+it('does not ban below not_found_threshold or when it is left null', function (?int $threshold, int $requests) {
+    config(['scanner-guard.not_found_threshold' => $threshold]);
+    $ip = '10.0.0.8';
+
+    foreach (range(1, $requests) as $i) {
+        $this->withServerVariables(['REMOTE_ADDR' => $ip])->get("/missing/{$i}")->assertNotFound();
+    }
+
+    expect(ScannerGuardBan::query()->count())->toBe(0);
+    $this->withServerVariables(['REMOTE_ADDR' => $ip])->get('/hello')->assertOk();
+})->with([
+    'below threshold' => [20, 5],
+    'off' => [null, 25],
+]);
 
 it('is a no-op entirely when disabled', function () {
     config(['scanner-guard.enabled' => false]);

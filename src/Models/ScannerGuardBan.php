@@ -32,6 +32,8 @@ class ScannerGuardBan extends Model
 
     public const REASON_ASN = 'asn_blocklist';
 
+    public const REASON_NOT_FOUND_FLOOD = 'not_found_flood';
+
     public $timestamps = false;
 
     protected $fillable = [

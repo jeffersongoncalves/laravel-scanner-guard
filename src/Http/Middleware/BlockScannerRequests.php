@@ -57,7 +57,7 @@ class BlockScannerRequests
         $matched = $this->scannerGuard->matchScannerPath($request->path());
 
         if ($matched === null) {
-            return $next($request);
+            return $this->countNotFound($request, $ip, $next($request));
         }
 
         $hits = $this->scannerGuard->registerHit($ip);
@@ -68,6 +68,28 @@ class BlockScannerRequests
             return response('', $status);
         }
 
-        return $next($request);
+        return $this->countNotFound($request, $ip, $next($request));
+    }
+
+    /**
+     * Opt-in 404-flood rule (not_found_threshold). Only sees responses from
+     * the app itself — scanner-guard's own early returns never get here, so a
+     * ban can't extend itself. The ban applies from the next request.
+     */
+    protected function countNotFound(Request $request, string $ip, Response $response): Response
+    {
+        $threshold = (int) config('scanner-guard.not_found_threshold');
+
+        if ($threshold < 1 || $response->getStatusCode() !== 404) {
+            return $response;
+        }
+
+        $hits = $this->scannerGuard->registerNotFoundHit($ip);
+
+        if ($hits >= $threshold) {
+            $this->scannerGuard->ban($ip, ScannerGuardBan::REASON_NOT_FOUND_FLOOD, '404', $hits, $request->path());
+        }
+
+        return $response;
     }
 }
