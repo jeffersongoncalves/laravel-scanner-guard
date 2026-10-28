@@ -143,9 +143,8 @@ class ScannerGuard
 
     protected function increment(string $key, int $window): int
     {
-        if (! $this->cache()->has($key)) {
-            $this->cache()->put($key, 0, $window);
-        }
+        // add() only writes when missing, atomically — has()+put() could reset a concurrent increment.
+        $this->cache()->add($key, 0, $window);
 
         return (int) $this->cache()->increment($key);
     }

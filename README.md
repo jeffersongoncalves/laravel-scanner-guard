@@ -101,9 +101,13 @@ SCANNER_GUARD_NOT_FOUND_WINDOW=60
 
 An IP that gets `not_found_threshold` 404 responses within `not_found_window` seconds is banned
 with reason `not_found_flood`. The 404 that trips it is served normally; the ban applies from the
-next request. Only 404s produced by routes the middleware runs on are counted — attach it to a
-fallback route (`Route::fallback(...)->middleware('scanner-guard')`) or globally if unmatched URLs
-should count too.
+next request. Only 404s produced by routes the middleware runs on are counted. To count unmatched
+URLs too, attach it globally or add a catch-all route. `Route::fallback()` only matches GET/HEAD
+(other methods to an unknown URL get a 405 and aren't counted), so for every method use:
+
+```php
+Route::any('{any}', fn () => abort(404))->where('any', '.*')->fallback()->middleware('scanner-guard');
+```
 
 ### ASN blocklisting
 
