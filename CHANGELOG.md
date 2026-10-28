@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.5.1 - 2026-10-28
+
+### Fixed
+
+- `isBanned()` now caches a database miss as `false` for `negative_cache_ttl` seconds (default `60`, env `SCANNER_GUARD_NEGATIVE_CACHE_TTL`, `0` disables), so non-banned traffic no longer costs one query on `scanner_guard_bans` per request. `ban()` overwrites the entry, so new bans apply immediately. (#21, #22)
+
 ## 1.5.0 - 2026-10-28
 
 ### Added
@@ -21,6 +27,7 @@ Re-publish the migrations and migrate to add the `offense` column. You only need
 ```bash
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
+
 
 ```
 ## 1.4.0 - 2026-10-28
@@ -73,6 +80,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
