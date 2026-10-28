@@ -39,7 +39,9 @@ request -> isBanned()? -----------------------------> yes: abort(response_status
 `isBanned()` checks cache first (fast path), then falls back to the `scanner_guard_bans` table if
 the cache entry is missing — and re-hydrates the cache when it finds an active DB row. This means
 a `cache:clear` never silently un-bans anyone; it only costs one extra DB query per previously
-cached-but-now-uncached IP.
+cached-but-now-uncached IP. A DB miss is cached as `false` for `negative_cache_ttl` seconds
+(default 60, 0 = off), so non-banned traffic doesn't query the table on every request; `ban()`
+overwrites that entry, so a fresh ban takes effect immediately.
 
 ### Privacy: hashed DB, raw IP only in cache
 
