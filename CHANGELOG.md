@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.4.0 - 2026-10-28
+
+### Added
+
+- Opt-in 404-flood ban (#16, #17): `not_found_threshold` / `not_found_window` (env `SCANNER_GUARD_NOT_FOUND_THRESHOLD`, `SCANNER_GUARD_NOT_FOUND_WINDOW`, default off / 60s). An IP that gets that many 404 responses within the window is banned with the new reason `ScannerGuardBan::REASON_NOT_FOUND_FLOOD` (`not_found_flood`), from the next request on. scanner-guard's own responses are never counted.
+
+### Fixed
+
+- Hit counters are initialised with the cache's atomic `add()` instead of `has()` + `put()`, so concurrent requests can no longer reset an increment.
+
+### Docs
+
+- README "404 flood" section, including why `Route::fallback()` (GET/HEAD only) misses other methods and an all-method catch-all route to count unmatched URLs.
+
 ## 1.3.0 - 2026-10-01
 
 ### What's New
@@ -38,6 +52,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 ```
