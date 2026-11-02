@@ -14,6 +14,22 @@ it('self-schedules aggregate-and-prune daily by default', function () {
     expect($event)->not->toBeNull();
 });
 
+it('schedules export-denylist every minute when sync_to_nginx is on', function () {
+    putenv('SCANNER_GUARD_SYNC_TO_NGINX=true');
+    $_ENV['SCANNER_GUARD_SYNC_TO_NGINX'] = 'true';
+
+    $this->refreshApplication();
+
+    $event = collect(app(Schedule::class)->events())->first(
+        fn ($event) => str_contains($event->command ?? '', 'scanner-guard:export-denylist')
+    );
+
+    expect($event?->expression)->toBe('* * * * *');
+
+    putenv('SCANNER_GUARD_SYNC_TO_NGINX');
+    unset($_ENV['SCANNER_GUARD_SYNC_TO_NGINX']);
+});
+
 it('does not schedule aggregate-and-prune when disabled via env', function () {
     putenv('SCANNER_GUARD_AUTO_PRUNE=false');
     $_ENV['SCANNER_GUARD_AUTO_PRUNE'] = 'false';

@@ -70,6 +70,22 @@ it('logs instead of failing when the reload command fails', function () {
     Log::shouldHaveReceived('error')->withArgs(fn (string $message) => str_contains($message, 'nginx reload command failed'));
 });
 
+it('logs instead of failing when the reload command throws (e.g. a timeout)', function () {
+    Process::fake(fn () => throw new RuntimeException('The process exceeded the timeout of 60 seconds.'));
+    Log::spy();
+    config()->set('scanner-guard.nginx.reload_command', 'sudo nginx -s reload');
+
+    $this->artisan('scanner-guard:export-denylist')->assertSuccessful();
+
+    Log::shouldHaveReceived('error')->withArgs(fn (string $message, array $context) => str_contains($context['error'], 'timeout'));
+});
+
+it('releases the export lock so the next export can run', function () {
+    $this->artisan('scanner-guard:export-denylist')->assertSuccessful();
+
+    expect(app(ScannerGuard::class)->cache()->getStore()->lock('scanner-guard:export-denylist')->get())->toBeTrue();
+});
+
 it('queues an export on every ban when sync_to_nginx is on', function () {
     Queue::fake();
     config()->set('scanner-guard.sync_to_nginx', true);

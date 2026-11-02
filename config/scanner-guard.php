@@ -255,7 +255,7 @@ return [
     | Sync to nginx
     |--------------------------------------------------------------------------
     |
-    | When true, self-schedules `scanner-guard:export-denylist` daily so your
+    | When true, self-schedules `scanner-guard:export-denylist` every minute so your
     | nginx `include`d denylist file stays current. Off by default: writing
     | files to disk on a schedule is more deployment-specific (permissions,
     | shared vs. per-instance storage, whether nginx even reloads the file)
@@ -273,8 +273,9 @@ return [
     | Used with sync_to_nginx. `path` is relative to base_path() and shared
     | by the daily run and the on-ban export. `export_on_ban` queues a
     | (unique) export job on every new ban, so the file follows the ban
-    | table within seconds; the daily run stays as a safety net and drops
-    | expired bans. `reload_command` (e.g. "sudo nginx -s reload") runs only
+    | table within seconds; the per-minute run drops expired bans and is the
+    | safety net. Exports share a cache lock, so they never overlap.
+    | `reload_command` (e.g. "sudo nginx -s reload") runs only
     | when the file content changed; a failure is logged, never thrown.
     |
     */

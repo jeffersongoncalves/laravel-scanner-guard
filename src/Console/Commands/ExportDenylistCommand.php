@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace JeffersonGoncalves\ScannerGuard\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
+use Throwable;
 
 /**
  * Writes currently-active bans as nginx `deny <ip>;` lines. Only bans whose
@@ -31,6 +33,19 @@ class ExportDenylistCommand extends Command
             return self::SUCCESS;
         }
 
+        // One lock around read + write + reload, shared by the on-ban job and the
+        // schedule: a slower export can never overwrite a newer snapshot.
+        $store = $scannerGuard->cache()->getStore();
+
+        if ($store instanceof LockProvider) {
+            return $store->lock('scanner-guard:export-denylist', 120)->block(60, fn (): int => $this->export($scannerGuard));
+        }
+
+        return $this->export($scannerGuard);
+    }
+
+    protected function export(ScannerGuard $scannerGuard): int
+    {
         $bans = ScannerGuardBan::query()->active()->get();
 
         $lines = [];
@@ -87,15 +102,17 @@ class ExportDenylistCommand extends Command
             return;
         }
 
-        $result = Process::run((string) $command);
+        try {
+            $result = Process::run((string) $command);
+            $error = $result->failed() ? 'exit '.$result->exitCode().': '.trim($result->errorOutput() ?: $result->output()) : null;
+        } catch (Throwable $e) {
+            // Timeout or the command can't start: the file is already written, so only report it.
+            $error = $e->getMessage();
+        }
 
-        if ($result->failed()) {
-            Log::error('scanner-guard: nginx reload command failed', [
-                'command' => $command,
-                'exit_code' => $result->exitCode(),
-                'output' => trim($result->errorOutput() ?: $result->output()),
-            ]);
-            $this->warn('nginx reload command failed (exit '.$result->exitCode().'), see the log.');
+        if ($error !== null) {
+            Log::error('scanner-guard: nginx reload command failed', ['command' => $command, 'error' => $error]);
+            $this->warn('nginx reload command failed, see the log.');
         }
     }
 }
