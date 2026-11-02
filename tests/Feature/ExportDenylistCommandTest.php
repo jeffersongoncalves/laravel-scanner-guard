@@ -101,6 +101,32 @@ it('writes valid ip_blocklist entries as static deny lines and skips invalid one
         ->not->toContain('allow all');
 });
 
+it('writes one deny line per ip, keeping the latest expiry of escalated bans', function () {
+    config(['scanner-guard.escalation' => [86400, 604800]]);
+    $guard = app(ScannerGuard::class);
+    $guard->ban('10.20.20.30', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+    $guard->ban('10.20.20.30', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+
+    $latest = ScannerGuardBan::query()->max('expires_at');
+    expect(ScannerGuardBan::query()->active()->count())->toBe(2)
+        ->and(ScannerGuardBan::query()->min('expires_at'))->not->toBe($latest);
+
+    $this->artisan('scanner-guard:export-denylist')->assertSuccessful();
+
+    $contents = File::get(storage_path('app/scanner-guard/denylist.conf'));
+    expect(substr_count($contents, 'deny 10.20.20.30;'))->toBe(1)
+        ->and($contents)->toContain(ScannerGuardBan::query()->orderByDesc('expires_at')->first()->expires_at->toIso8601String());
+});
+
+it('writes only the static line for an ip that is also banned', function () {
+    config()->set('scanner-guard.ip_blocklist', ['10.20.20.31']);
+    app(ScannerGuard::class)->ban('10.20.20.31', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+
+    $this->artisan('scanner-guard:export-denylist')->assertSuccessful();
+
+    expect(File::get(storage_path('app/scanner-guard/denylist.conf')))->toBe('deny 10.20.20.31; # static'.PHP_EOL);
+});
+
 it('queues an export on every ban when sync_to_nginx is on', function () {
     Queue::fake();
     config()->set('scanner-guard.sync_to_nginx', true);

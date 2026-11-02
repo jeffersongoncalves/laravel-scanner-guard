@@ -46,8 +46,11 @@ class ExportDenylistCommand extends Command
 
     protected function export(ScannerGuard $scannerGuard): int
     {
-        $bans = ScannerGuardBan::query()->active()->get();
+        // Latest expiry first: an escalated IP keeps several active rows, the
+        // first one seen per IP is the one written. id breaks ties for a stable file.
+        $bans = ScannerGuardBan::query()->active()->orderByDesc('expires_at')->orderBy('id')->get();
 
+        // Keyed by IP/CIDR: one deny line each, static entries win over bans.
         $lines = [];
         $skipped = 0;
 
@@ -59,7 +62,7 @@ class ExportDenylistCommand extends Command
                 continue;
             }
 
-            $lines[] = "deny {$entry}; # static";
+            $lines[$entry] = "deny {$entry}; # static";
         }
 
         foreach ($bans as $ban) {
@@ -71,14 +74,13 @@ class ExportDenylistCommand extends Command
                 continue;
             }
 
-            $lines[] = "deny {$ip}; # {$ban->reason}, expires {$ban->expires_at->toIso8601String()}";
+            $lines[$ip] ??= "deny {$ip}; # {$ban->reason}, expires {$ban->expires_at->toIso8601String()}";
         }
 
         $path = base_path((string) ($this->option('path') ?? config('scanner-guard.nginx.path', 'storage/app/scanner-guard/denylist.conf')));
 
         File::ensureDirectoryExists(dirname($path));
 
-        $lines = array_values(array_unique($lines));
         $contents = implode(PHP_EOL, $lines).PHP_EOL;
         $changed = ! File::exists($path) || File::get($path) !== $contents;
 
