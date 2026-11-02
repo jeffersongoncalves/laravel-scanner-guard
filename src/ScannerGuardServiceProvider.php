@@ -57,7 +57,9 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
             $schedule = $this->app->make(Schedule::class);
 
             if (config('scanner-guard.sync_to_nginx', false)) {
-                $schedule->command(ExportDenylistCommand::class)->daily();
+                // Every minute so expired bans leave nginx promptly; cheap, since the
+                // file is only rewritten (and nginx reloaded) when its content changes.
+                $schedule->command(ExportDenylistCommand::class)->everyMinute()->withoutOverlapping();
             }
 
             if (config('scanner-guard.auto_prune', true)) {

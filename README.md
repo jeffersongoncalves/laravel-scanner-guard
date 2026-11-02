@@ -185,9 +185,30 @@ server {
 ```
 
 Nothing schedules this automatically unless you opt in via `scanner-guard.sync_to_nginx = true`
-(env `SCANNER_GUARD_SYNC_TO_NGINX`), which self-schedules the export daily — left off by default
+(env `SCANNER_GUARD_SYNC_TO_NGINX`), which self-schedules the export every minute (cheap: the file
+is only rewritten when its content changes) so expired bans leave nginx promptly — left off by default
 because writing files to disk on a schedule is far more deployment-specific (permissions, shared
 vs. per-instance storage, whether nginx actually reloads the file) than a DB-only aggregate job.
+
+With `sync_to_nginx` on, every new ban (local or forwarded) also queues a unique
+`ExportDenylist` job (`scanner-guard.nginx.export_on_ban`, env
+`SCANNER_GUARD_NGINX_EXPORT_ON_BAN`, default `true`), so the file follows the ban table within
+seconds; a burst of bans collapses into one export. The scheduled run stays as a safety net and is
+what drops expired bans. Every export runs under one cache lock (`scanner-guard.store`), so a
+slower export never overwrites a newer snapshot. The default path comes from `scanner-guard.nginx.path`
+(env `SCANNER_GUARD_NGINX_PATH`) so the scheduled run and the job agree on it; `--path` still
+overrides it. The file is written to a temp file and renamed over the target, so nginx never reads
+a half-written list.
+
+nginx only re-reads an `include`d file on reload. Set `scanner-guard.nginx.reload_command`
+(env `SCANNER_GUARD_NGINX_RELOAD_COMMAND`, e.g. `sudo nginx -s reload`) and it runs after an
+export **only when the file content changed**; a non-zero exit or a timeout is logged, never thrown. The PHP
+user (and your queue worker, if different) must be allowed to run it without a password, e.g. in
+`/etc/sudoers.d/scanner-guard` (Forge's user is `forge`):
+
+```
+forge ALL=NOPASSWD: /usr/sbin/nginx -s reload
+```
 
 ### Aggregating and pruning
 
@@ -326,6 +347,11 @@ return [
     'store' => null,
     'response_status' => 404,
     'sync_to_nginx' => false,
+    'nginx' => [
+        'path' => 'storage/app/scanner-guard/denylist.conf',
+        'export_on_ban' => true,
+        'reload_command' => null,
+    ],
     'daily_stats_table' => 'scanner_guard_ban_daily_stats',
     'retention_days' => 90,
     'purge_expired_after_days' => 0,
