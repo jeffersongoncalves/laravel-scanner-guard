@@ -189,6 +189,42 @@ scripts, uptime monitors and health checks. `ban` (default) rejects and records 
 stats and reaches the nginx export like any other ban; `reject` only answers with
 `response_status`, nothing recorded.
 
+### Runtime blocklist (database)
+
+With the `database` driver, IPs / CIDR ranges and UA patterns can also live in the
+`scanner_guard_blocklist` table (run the `create_scanner_guard_blocklist_table` migration), so they
+change without a config edit or a redeploy. They are added on top of `ip_blocklist` and
+`user_agent_blocklist.patterns`, which keep applying:
+
+```php
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBlocklistEntry;
+
+ScannerGuardBlocklistEntry::query()->create(['type' => ScannerGuardBlocklistEntry::TYPE_IP, 'value' => '185.177.72.0/24', 'note' => 'Cloudflare report']);
+ScannerGuardBlocklistEntry::query()->create(['type' => ScannerGuardBlocklistEntry::TYPE_USER_AGENT, 'value' => '*masscan*']);
+```
+
+The rows are cached forever in the scanner-guard store, so a check costs one cache read and no
+query. Saving or deleting a model drops that cache (the next check, in any web, queue or Octane
+worker, sees the change) and, with `sync_to_nginx`, queues the nginx export like a new ban does. A
+mass `query()->delete()` / `update()` fires no model events: call `ScannerGuard::blocklistChanged()`
+after one. If the table is missing, the config lists still apply and the error is reported.
+
+The migration skips creating the table when it already exists, so apps that ran the one from
+`filament-scanner-guard` keep their rows.
+
+### Unbanning
+
+```php
+use JeffersonGoncalves\ScannerGuard\Facades\ScannerGuard;
+
+ScannerGuard::unban($ban->ip_hash); // number of active ban rows deleted
+```
+
+Deleting the ban row alone isn't enough: the cached ban would keep answering "banned" until it
+expires. `unban()` deletes the active rows for that hash (`database` driver), forgets the cached ban
+and its raw IP, and with `sync_to_nginx` queues the nginx export. A failing export dispatch is
+logged, never thrown.
+
 ### Manual review
 
 With the default `database` driver, every ban writes a row to `scanner_guard_bans` (`reason`,

@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use JeffersonGoncalves\ScannerGuard\Jobs\ExportDenylist;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBlocklistEntry;
 use JeffersonGoncalves\VisitorFingerprint\Support\IpAnonymizer;
 use Symfony\Component\HttpFoundation\IpUtils;
 use Throwable;
@@ -122,11 +123,93 @@ class ScannerGuard
     }
 
     /**
+     * Config ip_blocklist plus the database "ip" entries.
+     *
      * @return list<string>
      */
     public function ipBlocklist(): array
     {
-        return array_values(array_map('strval', (array) config('scanner-guard.ip_blocklist', [])));
+        return $this->mergeBlocklist((array) config('scanner-guard.ip_blocklist', []), ScannerGuardBlocklistEntry::TYPE_IP);
+    }
+
+    /**
+     * Config user_agent_blocklist.patterns plus the database "user_agent" entries.
+     *
+     * @return list<string>
+     */
+    public function userAgentPatterns(): array
+    {
+        return $this->mergeBlocklist((array) config('scanner-guard.user_agent_blocklist.patterns', []), ScannerGuardBlocklistEntry::TYPE_USER_AGENT);
+    }
+
+    /**
+     * Drops the cached database blocklist and re-exports nginx. Called by
+     * ScannerGuardBlocklistEntry on save/delete.
+     */
+    public function blocklistChanged(): void
+    {
+        $this->cache()->forget($this->blocklistKey());
+        $this->queueNginxExport();
+    }
+
+    /**
+     * Lifts every active ban of $ipHash at once. Deleting the row alone
+     * isn't enough: the cached ban would keep answering "banned" until it
+     * expires.
+     *
+     * @return int ban rows deleted (always 0 without the database driver)
+     */
+    public function unban(string $ipHash): int
+    {
+        $deleted = $this->driver() === 'database'
+            ? ScannerGuardBan::query()->where('ip_hash', $ipHash)->active()->delete()
+            : 0;
+
+        $this->cache()->forget($this->banKey($ipHash));
+        $this->cache()->forget($this->rawIpKey($ipHash));
+        $this->queueNginxExport();
+
+        return (int) $deleted;
+    }
+
+    /**
+     * @param  array<mixed>  $configured
+     * @return list<string>
+     */
+    protected function mergeBlocklist(array $configured, string $type): array
+    {
+        return array_values(array_unique(array_map('strval', [...$configured, ...($this->databaseBlocklist()[$type] ?? [])])));
+    }
+
+    /**
+     * Read from cache on every call rather than merged into config at boot,
+     * so queue workers and Octane see a change without re-booting. One cache
+     * read per check; the query only runs after blocklistChanged().
+     *
+     * @return array<string, list<string>>
+     */
+    protected function databaseBlocklist(): array
+    {
+        if ($this->driver() !== 'database') {
+            return [];
+        }
+
+        try {
+            /** @var array<string, list<string>> */
+            return $this->cache()->rememberForever($this->blocklistKey(), fn (): array => ScannerGuardBlocklistEntry::query()
+                ->orderBy('id')
+                ->get(['type', 'value'])
+                ->groupBy('type')
+                ->map(fn (Collection $group): array => $group->pluck('value')->all())
+                ->all());
+        } catch (Throwable $e) {
+            // e.g. the blocklist migration not run yet: fall back to config,
+            // and only retry the query once per negative_cache_ttl.
+            report($e);
+            $this->cache()->put($this->blocklistKey(), [], max((int) config('scanner-guard.negative_cache_ttl', 60), 1));
+
+            return [];
+        }
     }
 
     /**
@@ -140,9 +223,9 @@ class ScannerGuard
             return config('scanner-guard.user_agent_blocklist.block_empty', false) ? 'empty' : null;
         }
 
-        foreach ((array) config('scanner-guard.user_agent_blocklist.patterns', []) as $pattern) {
-            if (fnmatch((string) $pattern, $userAgent, FNM_CASEFOLD)) {
-                return (string) $pattern;
+        foreach ($this->userAgentPatterns() as $pattern) {
+            if (fnmatch($pattern, $userAgent, FNM_CASEFOLD)) {
+                return $pattern;
             }
         }
 
@@ -529,5 +612,10 @@ class ScannerGuard
     protected function rawIpKey(string $hash): string
     {
         return "scanner-guard:raw-ip:{$hash}";
+    }
+
+    protected function blocklistKey(): string
+    {
+        return 'scanner-guard:blocklist';
     }
 }
