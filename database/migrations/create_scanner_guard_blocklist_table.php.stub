@@ -1,0 +1,31 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        // Same table filament-scanner-guard < 1.5 / 2.5 / 3.5 created: apps that ran it keep their rows.
+        if (Schema::hasTable('scanner_guard_blocklist')) {
+            return;
+        }
+
+        Schema::create('scanner_guard_blocklist', function (Blueprint $table) {
+            $table->id();
+            $table->string('type', 20);
+            $table->string('value');
+            $table->string('note')->nullable();
+            $table->timestamps();
+
+            $table->unique(['type', 'value']);
+        });
+    }
+
+    public function down(): void
+    {
+        // Kept: the table can predate this migration (see up()), so a rollback must not drop its rows.
+    }
+};

@@ -23,6 +23,7 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
             ->hasMigration('create_scanner_guard_bans_table')
             ->hasMigration('create_scanner_guard_ban_daily_stats_table')
             ->hasMigration('add_offense_to_scanner_guard_bans_table')
+            ->hasMigration('create_scanner_guard_blocklist_table')
             ->hasCommands([
                 ExportDenylistCommand::class,
                 AggregateAndPruneCommand::class,

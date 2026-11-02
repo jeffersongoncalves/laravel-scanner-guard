@@ -314,7 +314,7 @@ return [
     | by the daily run and the on-ban export. `export_on_ban` queues a
     | (unique) export job on every new ban, so the file follows the ban
     | table within seconds; the per-minute run drops expired bans and is the
-    | safety net. Exports share a cache lock, so they never overlap.
+    | safety net. unban() and runtime blocklist changes always queue one. Exports share a cache lock, so they never overlap.
     | `reload_command` (e.g. "sudo nginx -s reload") runs only
     | when the file content changed; a failure is logged, never thrown.
     |
