@@ -211,6 +211,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | IP Blocklist
+    |--------------------------------------------------------------------------
+    |
+    | Permanent block for IPs and CIDR ranges (IPv4 + IPv6) you have already
+    | identified, e.g. '185.177.72.69' or '185.177.72.0/24'. Rejected with
+    | response_status before any counting, no ban row written, never
+    | expires. scanner-guard:export-denylist always writes them as
+    | `deny ...; # static` lines, so with sync_to_nginx they never reach PHP.
+    | Invalid entries are skipped by the export so they can't break nginx.
+    |
+    */
+    'ip_blocklist' => [],
+
+    /*
+    |--------------------------------------------------------------------------
     | Cache Store
     |--------------------------------------------------------------------------
     |

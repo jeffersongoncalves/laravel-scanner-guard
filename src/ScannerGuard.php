@@ -17,6 +17,7 @@ use InvalidArgumentException;
 use JeffersonGoncalves\ScannerGuard\Jobs\ExportDenylist;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\VisitorFingerprint\Support\IpAnonymizer;
+use Symfony\Component\HttpFoundation\IpUtils;
 use Throwable;
 
 /**
@@ -107,6 +108,25 @@ class ScannerGuard
         }
 
         return null;
+    }
+
+    /**
+     * Static ip_blocklist (IPs and CIDR ranges, IPv4 + IPv6). Not a ban: no
+     * row, no expiry.
+     */
+    public function isIpBlocked(string $ip): bool
+    {
+        $blocklist = $this->ipBlocklist();
+
+        return $blocklist !== [] && IpUtils::checkIp($ip, $blocklist);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function ipBlocklist(): array
+    {
+        return array_values(array_map('strval', (array) config('scanner-guard.ip_blocklist', [])));
     }
 
     public function isAsnBlocked(?string $asn): bool
