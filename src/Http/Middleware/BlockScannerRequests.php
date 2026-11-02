@@ -42,6 +42,16 @@ class BlockScannerRequests
             return response('', $status);
         }
 
+        $userAgentMatch = $this->scannerGuard->matchUserAgent($request->userAgent());
+
+        if ($userAgentMatch !== null) {
+            if (config('scanner-guard.user_agent_blocklist.action', 'ban') === 'ban') {
+                $this->scannerGuard->ban($ip, ScannerGuardBan::REASON_USER_AGENT, $userAgentMatch, 1, $request->path());
+            }
+
+            return response('', $status);
+        }
+
         $blocklist = (array) config('scanner-guard.asn_blocklist', []);
 
         if ($blocklist !== []) {

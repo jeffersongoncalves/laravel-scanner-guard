@@ -35,6 +35,8 @@ class ScannerGuardBan extends Model
 
     public const REASON_NOT_FOUND_FLOOD = 'not_found_flood';
 
+    public const REASON_USER_AGENT = 'user_agent';
+
     public $timestamps = false;
 
     protected $fillable = [
