@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
+use JeffersonGoncalves\ScannerGuard\Jobs\ExportDenylist;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\VisitorFingerprint\Support\IpAnonymizer;
 use Throwable;
@@ -382,8 +383,26 @@ class ScannerGuard
         ], fn ($value) => $value !== null));
 
         $this->recordDailyStats($ban);
+        $this->queueNginxExport();
 
         return $ban;
+    }
+
+    /**
+     * Keeps the nginx denylist within seconds of the ban table instead of a
+     * day behind. A queue failure is logged, never breaks the ban.
+     */
+    protected function queueNginxExport(): void
+    {
+        if (! config('scanner-guard.sync_to_nginx', false) || ! config('scanner-guard.nginx.export_on_ban', true)) {
+            return;
+        }
+
+        try {
+            ExportDenylist::dispatch();
+        } catch (Throwable $e) {
+            Log::error('scanner-guard: failed to queue nginx export', ['exception' => $e->getMessage()]);
+        }
     }
 
     /**

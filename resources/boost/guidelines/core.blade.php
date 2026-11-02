@@ -51,7 +51,9 @@ use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
   nginx export are `database`-only.
 - **nginx export**: `php artisan scanner-guard:export-denylist` writes active bans as `deny <ip>;`
   lines, best-effort (see the package README's "Privacy tradeoff" section for why this can't be
-  100% reliable by design — it needs a cached raw IP, not the permanent hashed record).
+  100% reliable by design — it needs a cached raw IP, not the permanent hashed record). With
+  `sync_to_nginx` on, each ban queues a re-export (`nginx.export_on_ban`); `nginx.reload_command`
+  reloads nginx only when the file changed.
 
 ### Configuration
 

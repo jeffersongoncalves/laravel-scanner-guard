@@ -267,6 +267,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | nginx Export
+    |--------------------------------------------------------------------------
+    |
+    | Used with sync_to_nginx. `path` is relative to base_path() and shared
+    | by the daily run and the on-ban export. `export_on_ban` queues a
+    | (unique) export job on every new ban, so the file follows the ban
+    | table within seconds; the daily run stays as a safety net and drops
+    | expired bans. `reload_command` (e.g. "sudo nginx -s reload") runs only
+    | when the file content changed; a failure is logged, never thrown.
+    |
+    */
+    'nginx' => [
+        'path' => env('SCANNER_GUARD_NGINX_PATH', 'storage/app/scanner-guard/denylist.conf'),
+        'export_on_ban' => env('SCANNER_GUARD_NGINX_EXPORT_ON_BAN', true),
+        'reload_command' => env('SCANNER_GUARD_NGINX_RELOAD_COMMAND'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Daily Stats Table
     |--------------------------------------------------------------------------
     |

@@ -6,6 +6,8 @@ namespace JeffersonGoncalves\ScannerGuard\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Process;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
 
@@ -17,7 +19,7 @@ use JeffersonGoncalves\ScannerGuard\ScannerGuard;
  */
 class ExportDenylistCommand extends Command
 {
-    protected $signature = 'scanner-guard:export-denylist {--path=storage/app/scanner-guard/denylist.conf}';
+    protected $signature = 'scanner-guard:export-denylist {--path= : Relative to base_path(); defaults to scanner-guard.nginx.path}';
 
     protected $description = 'Export active scanner-guard bans as an nginx deny-list file';
 
@@ -46,15 +48,26 @@ class ExportDenylistCommand extends Command
             $lines[] = "deny {$ip}; # {$ban->reason}, expires {$ban->expires_at->toIso8601String()}";
         }
 
-        $path = base_path((string) $this->option('path'));
+        $path = base_path((string) ($this->option('path') ?? config('scanner-guard.nginx.path', 'storage/app/scanner-guard/denylist.conf')));
 
         File::ensureDirectoryExists(dirname($path));
 
         $lines = array_values(array_unique($lines));
+        $contents = implode(PHP_EOL, $lines).PHP_EOL;
+        $changed = ! File::exists($path) || File::get($path) !== $contents;
 
-        File::put($path, implode(PHP_EOL, $lines).PHP_EOL);
+        if ($changed) {
+            // Temp file + rename: an nginx reload mid-write never reads a truncated file.
+            $temp = $path.'.'.bin2hex(random_bytes(4)).'.tmp';
+            File::put($temp, $contents);
+            File::move($temp, $path);
+        }
 
         $this->info(sprintf('Wrote %d deny rule(s) to %s.', count($lines), $path));
+
+        if ($changed) {
+            $this->reload();
+        }
 
         if ($skipped > 0) {
             $this->warn(sprintf(
@@ -64,5 +77,25 @@ class ExportDenylistCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    protected function reload(): void
+    {
+        $command = config('scanner-guard.nginx.reload_command');
+
+        if ($command === null || $command === '') {
+            return;
+        }
+
+        $result = Process::run((string) $command);
+
+        if ($result->failed()) {
+            Log::error('scanner-guard: nginx reload command failed', [
+                'command' => $command,
+                'exit_code' => $result->exitCode(),
+                'output' => trim($result->errorOutput() ?: $result->output()),
+            ]);
+            $this->warn('nginx reload command failed (exit '.$result->exitCode().'), see the log.');
+        }
     }
 }
