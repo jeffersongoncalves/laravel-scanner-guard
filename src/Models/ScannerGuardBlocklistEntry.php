@@ -38,7 +38,10 @@ class ScannerGuardBlocklistEntry extends Model
 
     protected static function booted(): void
     {
-        static::saved(fn () => app(ScannerGuard::class)->blocklistChanged());
-        static::deleted(fn () => app(ScannerGuard::class)->blocklistChanged());
+        // After commit: an earlier refresh could re-cache the old rows, and a rollback must not export.
+        $changed = fn (self $entry) => $entry->getConnection()->afterCommit(fn () => app(ScannerGuard::class)->blocklistChanged());
+
+        static::saved($changed);
+        static::deleted($changed);
     }
 }

@@ -203,14 +203,16 @@ ScannerGuardBlocklistEntry::query()->create(['type' => ScannerGuardBlocklistEntr
 ScannerGuardBlocklistEntry::query()->create(['type' => ScannerGuardBlocklistEntry::TYPE_USER_AGENT, 'value' => '*masscan*']);
 ```
 
-The rows are cached forever in the scanner-guard store, so a check costs one cache read and no
-query. Saving or deleting a model drops that cache (the next check, in any web, queue or Octane
-worker, sees the change) and, with `sync_to_nginx`, queues the nginx export like a new ban does. A
-mass `query()->delete()` / `update()` fires no model events: call `ScannerGuard::blocklistChanged()`
-after one. If the table is missing, the config lists still apply and the error is reported.
+The rows are cached in the scanner-guard store under a version key, so a check costs two cache
+reads and no query. Saving or deleting a model, once its transaction commits, moves to a new
+version (the next check, in any web, queue or Octane worker, sees the change) and, with
+`sync_to_nginx`, queues the nginx export (`nginx.export_on_ban` only gates exports on new bans). A
+rolled-back change does neither. A mass `query()->delete()` / `update()` fires no model events: call
+`ScannerGuard::blocklistChanged()` after one. If the table is missing, the config lists still apply
+and the error is reported.
 
 The migration skips creating the table when it already exists, so apps that ran the one from
-`filament-scanner-guard` keep their rows.
+`filament-scanner-guard` keep their rows. For the same reason, rolling it back keeps the table.
 
 ### Unbanning
 

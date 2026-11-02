@@ -103,12 +103,56 @@ it('queues an nginx export on every blocklist change when sync_to_nginx is on', 
     Queue::assertPushed(ExportDenylist::class);
 });
 
-it('keeps an existing blocklist table and its rows when the migration runs again', function () {
+it('keeps an existing blocklist table and its rows when the migration runs again or rolls back', function () {
     blockEntry(ScannerGuardBlocklistEntry::TYPE_IP, '10.30.0.6');
 
-    (include __DIR__.'/../../database/migrations/create_scanner_guard_blocklist_table.php.stub')->up();
+    $migration = include __DIR__.'/../../database/migrations/create_scanner_guard_blocklist_table.php.stub';
+    $migration->up();
+    $migration->down();
 
     expect(ScannerGuardBlocklistEntry::query()->pluck('value')->all())->toBe(['10.30.0.6']);
+});
+
+it('does not let a read started before a change re-cache the old list', function () {
+    $guard = app(ScannerGuard::class);
+    $guard->ipBlocklist();
+    $oldVersion = $guard->cache()->get('scanner-guard:blocklist-version');
+
+    blockEntry(ScannerGuardBlocklistEntry::TYPE_IP, '10.30.0.10');
+    // The in-flight read finishes after the change and writes the rows it saw.
+    $guard->cache()->forever("scanner-guard:blocklist:{$oldVersion}", []);
+
+    expect($guard->isIpBlocked('10.30.0.10'))->toBeTrue();
+});
+
+it('neither refreshes nor exports a blocklist change that is rolled back', function () {
+    Queue::fake();
+    config(['scanner-guard.sync_to_nginx' => true]);
+    $guard = app(ScannerGuard::class);
+    $guard->ipBlocklist();
+    $version = $guard->cache()->get('scanner-guard:blocklist-version');
+
+    try {
+        DB::transaction(function () {
+            blockEntry(ScannerGuardBlocklistEntry::TYPE_IP, '10.30.0.11');
+
+            throw new RuntimeException('rollback');
+        });
+    } catch (RuntimeException) {
+    }
+
+    expect($guard->cache()->get('scanner-guard:blocklist-version'))->toBe($version)
+        ->and($guard->isIpBlocked('10.30.0.11'))->toBeFalse();
+    Queue::assertNothingPushed();
+});
+
+it('exports blocklist changes and unbans even with export_on_ban off', function () {
+    Queue::fake();
+    config(['scanner-guard.sync_to_nginx' => true, 'scanner-guard.nginx.export_on_ban' => false]);
+
+    app(ScannerGuard::class)->unban(app(ScannerGuard::class)->hashIp('10.30.0.12'));
+
+    Queue::assertPushed(ExportDenylist::class);
 });
 
 it('unban() lifts a cached ban at once and returns the deleted row count', function () {

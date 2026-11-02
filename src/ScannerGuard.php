@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 use JeffersonGoncalves\ScannerGuard\Jobs\ExportDenylist;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
@@ -148,7 +149,9 @@ class ScannerGuard
      */
     public function blocklistChanged(): void
     {
-        $this->cache()->forget($this->blocklistKey());
+        // A new version, not a forget(): a read still in flight from before the
+        // change can only fill the old version's key, never the current one.
+        $this->cache()->forever($this->blocklistVersionKey(), Str::random(16));
         $this->queueNginxExport();
     }
 
@@ -183,8 +186,9 @@ class ScannerGuard
 
     /**
      * Read from cache on every call rather than merged into config at boot,
-     * so queue workers and Octane see a change without re-booting. One cache
-     * read per check; the query only runs after blocklistChanged().
+     * so queue workers and Octane see a change without re-booting. Two cache
+     * reads per check (version + list); the query only runs after
+     * blocklistChanged(). The day TTL only expires superseded versions.
      *
      * @return array<string, list<string>>
      */
@@ -194,9 +198,12 @@ class ScannerGuard
             return [];
         }
 
+        $version = (string) $this->cache()->rememberForever($this->blocklistVersionKey(), fn (): string => Str::random(16));
+        $key = $this->blocklistKey($version);
+
         try {
             /** @var array<string, list<string>> */
-            return $this->cache()->rememberForever($this->blocklistKey(), fn (): array => ScannerGuardBlocklistEntry::query()
+            return $this->cache()->remember($key, now()->addDay(), fn (): array => ScannerGuardBlocklistEntry::query()
                 ->orderBy('id')
                 ->get(['type', 'value'])
                 ->groupBy('type')
@@ -206,7 +213,7 @@ class ScannerGuard
             // e.g. the blocklist migration not run yet: fall back to config,
             // and only retry the query once per negative_cache_ttl.
             report($e);
-            $this->cache()->put($this->blocklistKey(), [], max((int) config('scanner-guard.negative_cache_ttl', 60), 1));
+            $this->cache()->put($key, [], max((int) config('scanner-guard.negative_cache_ttl', 60), 1));
 
             return [];
         }
@@ -506,18 +513,22 @@ class ScannerGuard
         ], fn ($value) => $value !== null));
 
         $this->recordDailyStats($ban);
-        $this->queueNginxExport();
+
+        if (config('scanner-guard.nginx.export_on_ban', true)) {
+            $this->queueNginxExport();
+        }
 
         return $ban;
     }
 
     /**
-     * Keeps the nginx denylist within seconds of the ban table instead of a
-     * day behind. A queue failure is logged, never breaks the ban.
+     * Keeps the nginx denylist within seconds of the ban table and blocklist
+     * instead of a minute behind. A queue failure is logged, never breaks the
+     * ban, unban or blocklist change.
      */
     protected function queueNginxExport(): void
     {
-        if (! config('scanner-guard.sync_to_nginx', false) || ! config('scanner-guard.nginx.export_on_ban', true)) {
+        if (! config('scanner-guard.sync_to_nginx', false)) {
             return;
         }
 
@@ -614,8 +625,13 @@ class ScannerGuard
         return "scanner-guard:raw-ip:{$hash}";
     }
 
-    protected function blocklistKey(): string
+    protected function blocklistKey(string $version): string
     {
-        return 'scanner-guard:blocklist';
+        return "scanner-guard:blocklist:{$version}";
+    }
+
+    protected function blocklistVersionKey(): string
+    {
+        return 'scanner-guard:blocklist-version';
     }
 }

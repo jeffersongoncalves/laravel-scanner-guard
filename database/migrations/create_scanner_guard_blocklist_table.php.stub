@@ -26,6 +26,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('scanner_guard_blocklist');
+        // Kept: the table can predate this migration (see up()), so a rollback must not drop its rows.
     }
 };
