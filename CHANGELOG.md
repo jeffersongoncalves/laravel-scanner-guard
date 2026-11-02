@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.6.0 - 2026-11-02
+
+### Added
+
+- **nginx denylist follows bans in near real time** (#24, #27). With `sync_to_nginx` on, every new ban (local or forwarded) queues a unique `ExportDenylist` job, so the file follows the ban table within seconds. New config `scanner-guard.nginx`:
+  - `path` (env `SCANNER_GUARD_NGINX_PATH`): shared by the scheduled run and the job; `--path` still overrides it.
+  - `export_on_ban` (env `SCANNER_GUARD_NGINX_EXPORT_ON_BAN`, default `true`).
+  - `reload_command` (env `SCANNER_GUARD_NGINX_RELOAD_COMMAND`, e.g. `sudo nginx -s reload`): runs only when the file content changed. A failure or timeout is logged, never thrown. See the README for the sudoers line.
+  
+- **Permanent IP / CIDR blocklist** (#25, #28). `scanner-guard.ip_blocklist` (IPv4 + IPv6) is rejected before any counting, with no ban row and no expiry. The export writes these entries as `deny ...; # static` lines and skips invalid ones, so a typo can't break `nginx -t`.
+- **User-Agent blocklist** (#26, #29). `scanner-guard.user_agent_blocklist` adds `block_empty`, `patterns` (fnmatch, case-insensitive) and `action` (`ban` / `reject`). It adds a new ban reason, `user_agent`, which is also in the default `escalation_reasons`.
+
+### Changed
+
+- With `sync_to_nginx` on, `scanner-guard:export-denylist` is now scheduled `everyMinute()->withoutOverlapping()` instead of `daily()`, so expired bans leave nginx within about a minute. This stays cheap because the file is only rewritten when its content changes.
+- The denylist is written atomically (temp file + `rename()`). All exports run under one cache lock, so an older snapshot never overwrites a newer one.
+
+### Upgrading
+
+No migration needed. If you published the config, copy over the new `nginx`, `ip_blocklist` and `user_agent_blocklist` keys. To escalate UA bans, also add `user_agent` to `escalation_reasons`. All new features are opt-in; defaults keep the 1.5.x behaviour, except that the export now runs every minute when `sync_to_nginx` is on.
+
 ## 1.5.1 - 2026-10-28
 
 ### Fixed
@@ -27,6 +48,7 @@ Re-publish the migrations and migrate to add the `offense` column. You only need
 ```bash
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
+
 
 
 ```
@@ -80,6 +102,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
