@@ -7,7 +7,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\Schema;
 use JeffersonGoncalves\ScannerGuard\Jobs\ExportDenylist;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBlocklistEntry;
@@ -74,11 +73,21 @@ it('ignores the database list with a driver other than database', function () {
     expect(app(ScannerGuard::class)->isIpBlocked('10.30.0.3'))->toBeFalse();
 });
 
-it('falls back to the config lists when the blocklist table is missing', function () {
-    Schema::drop('scanner_guard_blocklist');
+it('falls back to the config lists when the blocklist query fails, e.g. migration not run', function () {
     config(['scanner-guard.ip_blocklist' => ['10.30.0.4']]);
 
-    expect(app(ScannerGuard::class)->ipBlocklist())->toBe(['10.30.0.4']);
+    // A failing query on the test connection would abort its wrapping transaction on PostgreSQL.
+    $default = config('database.default');
+    config([
+        'database.connections.broken' => ['driver' => 'sqlite', 'database' => __DIR__.'/missing.sqlite', 'prefix' => ''],
+        'database.default' => 'broken',
+    ]);
+
+    try {
+        expect(app(ScannerGuard::class)->ipBlocklist())->toBe(['10.30.0.4']);
+    } finally {
+        config(['database.default' => $default]);
+    }
 });
 
 it('queues an nginx export on every blocklist change when sync_to_nginx is on', function () {
