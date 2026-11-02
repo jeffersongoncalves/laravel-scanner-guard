@@ -2,17 +2,57 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.7.0 - 2026-11-02
+
+
+---
+
+### source: claude-code
+tags: [scratchpad]
+project: laravel-scanner-guard
+title: release-1.7.0
+created: 2026-11-02T19:29:54+00:00
+updated: 2026-11-02T19:29:54+00:00
+
+### Added
+
+- **Database-backed IP / User-Agent blocklist** (#30, #31). With the `database` driver, entries in the new `scanner_guard_blocklist` table (`ScannerGuardBlocklistEntry`, types `ip` / `user_agent`) are added on top of `ip_blocklist` and `user_agent_blocklist.patterns`, so they change without a config edit or redeploy. DB IPs also reach the nginx export as `# static` lines.
+  - Cached under a versioned key in the scanner-guard store: two cache reads per check, no query. Read on every call, so queue workers and Octane pick up a change without re-booting.
+  - Saving or deleting an entry refreshes the list and, with `sync_to_nginx`, queues the export, only after the transaction commits. A mass `query()->delete()` / `update()` fires no model events: call `ScannerGuard::blocklistChanged()` after one.
+  - If the table is missing, the config lists still apply and the error is reported.
+  
+- **`ScannerGuard::unban(string $ipHash): int`**. Deletes the active ban rows for that hash, forgets the cached ban and raw IP (so the IP passes at once, not after the cached ban expires) and, with `sync_to_nginx`, queues the export. Returns the number of rows deleted.
+- `ScannerGuard::userAgentPatterns()` and `ScannerGuard::blocklistChanged()`.
+
+### Changed
+
+- `nginx.export_on_ban` now gates only exports on new bans. `unban()` and blocklist changes always queue an export when `sync_to_nginx` is on.
+
+### Upgrading
+
+Publish and run the new migration:
+
+```bash
+php artisan vendor:publish --tag="scanner-guard-migrations"
+php artisan migrate
+
+```
+It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
+
 ## 1.6.0 - 2026-11-02
 
 ### Added
 
 - **nginx denylist follows bans in near real time** (#24, #27). With `sync_to_nginx` on, every new ban (local or forwarded) queues a unique `ExportDenylist` job, so the file follows the ban table within seconds. New config `scanner-guard.nginx`:
+  
   - `path` (env `SCANNER_GUARD_NGINX_PATH`): shared by the scheduled run and the job; `--path` still overrides it.
   - `export_on_ban` (env `SCANNER_GUARD_NGINX_EXPORT_ON_BAN`, default `true`).
   - `reload_command` (env `SCANNER_GUARD_NGINX_RELOAD_COMMAND`, e.g. `sudo nginx -s reload`): runs only when the file content changed. A failure or timeout is logged, never thrown. See the README for the sudoers line.
   
 - **Permanent IP / CIDR blocklist** (#25, #28). `scanner-guard.ip_blocklist` (IPv4 + IPv6) is rejected before any counting, with no ban row and no expiry. The export writes these entries as `deny ...; # static` lines and skips invalid ones, so a typo can't break `nginx -t`.
+  
 - **User-Agent blocklist** (#26, #29). `scanner-guard.user_agent_blocklist` adds `block_empty`, `patterns` (fnmatch, case-insensitive) and `action` (`ban` / `reject`). It adds a new ban reason, `user_agent`, which is also in the default `escalation_reasons`.
+  
 
 ### Changed
 
@@ -48,6 +88,7 @@ Re-publish the migrations and migrate to add the `offense` column. You only need
 ```bash
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
+
 
 
 
@@ -102,6 +143,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
