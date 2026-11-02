@@ -129,6 +129,26 @@ class ScannerGuard
         return array_values(array_map('strval', (array) config('scanner-guard.ip_blocklist', [])));
     }
 
+    /**
+     * @return string|null "empty" (block_empty) or the matched pattern, null when the UA passes
+     */
+    public function matchUserAgent(?string $userAgent): ?string
+    {
+        $userAgent = trim((string) $userAgent);
+
+        if ($userAgent === '') {
+            return config('scanner-guard.user_agent_blocklist.block_empty', false) ? 'empty' : null;
+        }
+
+        foreach ((array) config('scanner-guard.user_agent_blocklist.patterns', []) as $pattern) {
+            if (fnmatch((string) $pattern, $userAgent, FNM_CASEFOLD)) {
+                return (string) $pattern;
+            }
+        }
+
+        return null;
+    }
+
     public function isAsnBlocked(?string $asn): bool
     {
         if ($asn === null || $asn === '') {

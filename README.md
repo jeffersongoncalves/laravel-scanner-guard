@@ -119,7 +119,7 @@ repeats):
 // config/scanner-guard.php
 'escalation' => [86400, 604800, 1209600, 2592000, 7776000], // 1d → 7d → 14d → 30d → 90d
 'escalation_lookback_days' => 365, // env SCANNER_GUARD_ESCALATION_LOOKBACK_DAYS
-'escalation_reasons' => [ScannerGuardBan::REASON_SCANNER_PATH, ScannerGuardBan::REASON_NOT_FOUND_FLOOD],
+'escalation_reasons' => [ScannerGuardBan::REASON_SCANNER_PATH, ScannerGuardBan::REASON_NOT_FOUND_FLOOD, ScannerGuardBan::REASON_USER_AGENT],
 ```
 
 A ban is offense N+1 when the same IP had a ban numbered N for one of `escalation_reasons` within
@@ -168,6 +168,26 @@ Matching requests get `response_status` before any counting, checked with
 written and they never expire. `scanner-guard:export-denylist` always writes them as
 `deny <ip-or-cidr>; # static` lines, so with nginx sync on they never reach PHP at all. Invalid
 entries are skipped by the export (with a warning), so a typo can't break `nginx -t`.
+
+### User-Agent blocklisting
+
+Opt-in, empty by default. Catches scripted clients and blank User-Agents regardless of path:
+
+```php
+// config/scanner-guard.php
+'user_agent_blocklist' => [
+    'block_empty' => true, // env SCANNER_GUARD_BLOCK_EMPTY_USER_AGENT
+    'patterns' => ['zgrab*', '*masscan*', 'python-requests/*'],
+    'action' => 'ban', // or 'reject'; env SCANNER_GUARD_USER_AGENT_ACTION
+],
+```
+
+Patterns are `fnmatch()`-style, case-insensitive, matched against the full UA string **as-is**:
+nothing exempts verified crawlers, and a broad pattern such as `*curl*` also locks out your own
+scripts, uptime monitors and health checks. `ban` (default) rejects and records a ban with reason
+`user_agent` (stored with the matched pattern, or `empty`), so it escalates, shows up in the daily
+stats and reaches the nginx export like any other ban; `reject` only answers with
+`response_status`, nothing recorded.
 
 ### Manual review
 
@@ -355,11 +375,12 @@ return [
     'ban_duration' => 86400,
     'escalation' => [], // e.g. [86400, 604800, 1209600, 2592000, 7776000]
     'escalation_lookback_days' => 365,
-    'escalation_reasons' => ['scanner_path', 'not_found_flood'],
+    'escalation_reasons' => ['scanner_path', 'not_found_flood', 'user_agent'],
     'not_found_threshold' => null,
     'not_found_window' => 60,
     'asn_blocklist' => [],
     'ip_blocklist' => [],
+    'user_agent_blocklist' => ['block_empty' => false, 'patterns' => [], 'action' => 'ban'],
     'store' => null,
     'response_status' => 404,
     'sync_to_nginx' => false,

@@ -174,6 +174,7 @@ return [
     'escalation_reasons' => [
         ScannerGuardBan::REASON_SCANNER_PATH,
         ScannerGuardBan::REASON_NOT_FOUND_FLOOD,
+        ScannerGuardBan::REASON_USER_AGENT,
     ],
 
     /*
@@ -223,6 +224,30 @@ return [
     |
     */
     'ip_blocklist' => [],
+
+    /*
+    |--------------------------------------------------------------------------
+    | User-Agent Blocklist
+    |--------------------------------------------------------------------------
+    |
+    | Opt-in, empty by default: a UA rule is a decision only you can make for
+    | your own traffic. `block_empty` catches a missing/blank User-Agent.
+    | `patterns` are fnmatch()-style, case-insensitive, matched against the
+    | full UA string as-is — nothing exempts verified crawlers, and a broad
+    | pattern like '*curl*' also locks out your own scripts and monitors.
+    | `action`: "reject" (respond with response_status) or "ban" (reject and
+    | record a ban with reason "user_agent", so it escalates and reaches the
+    | nginx export like any other ban).
+    |
+    */
+    'user_agent_blocklist' => [
+        'block_empty' => env('SCANNER_GUARD_BLOCK_EMPTY_USER_AGENT', false),
+        'patterns' => [
+            // 'zgrab*',
+            // '*masscan*',
+        ],
+        'action' => env('SCANNER_GUARD_USER_AGENT_ACTION', 'ban'),
+    ],
 
     /*
     |--------------------------------------------------------------------------

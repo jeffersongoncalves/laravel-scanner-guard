@@ -61,6 +61,38 @@ it('lets ips outside the ip_blocklist through', function () {
     $this->withServerVariables(['REMOTE_ADDR' => '10.10.0.1'])->get('/hello')->assertOk();
 });
 
+it('bans a blocklisted user agent with reason user_agent, matched case-insensitively', function () {
+    config(['scanner-guard.user_agent_blocklist.patterns' => ['zgrab*', '*masscan*']]);
+
+    $this->withServerVariables(['REMOTE_ADDR' => '10.0.1.1', 'HTTP_USER_AGENT' => 'Mozilla/5.0 zgrab/0.x'])->get('/hello')->assertOk();
+    $this->withServerVariables(['REMOTE_ADDR' => '10.0.1.2', 'HTTP_USER_AGENT' => 'MASSCAN/1.3'])->get('/hello')->assertNotFound();
+
+    $ban = ScannerGuardBan::query()->sole();
+    expect($ban->reason)->toBe(ScannerGuardBan::REASON_USER_AGENT)
+        ->and($ban->matched_value)->toBe('*masscan*');
+});
+
+it('blocks an empty or missing user agent only when block_empty is on', function () {
+    $this->withServerVariables(['REMOTE_ADDR' => '10.0.1.3', 'HTTP_USER_AGENT' => ''])->get('/hello')->assertOk();
+
+    config(['scanner-guard.user_agent_blocklist.block_empty' => true]);
+    $this->withServerVariables(['REMOTE_ADDR' => '10.0.1.3', 'HTTP_USER_AGENT' => '  '])->get('/hello')->assertNotFound();
+
+    expect(ScannerGuardBan::query()->sole()->matched_value)->toBe('empty');
+});
+
+it('rejects without recording a ban when the user agent action is reject', function () {
+    config([
+        'scanner-guard.user_agent_blocklist.patterns' => ['curl/*'],
+        'scanner-guard.user_agent_blocklist.action' => 'reject',
+    ]);
+
+    $this->withServerVariables(['REMOTE_ADDR' => '10.0.1.4', 'HTTP_USER_AGENT' => 'curl/8.7.1'])->get('/hello')->assertNotFound();
+    $this->withServerVariables(['REMOTE_ADDR' => '10.0.1.4', 'HTTP_USER_AGENT' => 'Mozilla/5.0'])->get('/hello')->assertOk();
+
+    expect(ScannerGuardBan::query()->count())->toBe(0);
+});
+
 it('bans immediately on an asn-blocklist match, without needing a scanner path', function () {
     $ip = '10.0.0.4';
 
