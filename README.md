@@ -154,6 +154,21 @@ only the `ip_api` and `maxmind` drivers populate an ASN (the default `headers` d
 set `visitor-fingerprint.geoip.driver` accordingly for this to have any effect. When the blocklist
 is empty (the default), the GeoIP driver is never even resolved — zero added latency/cost.
 
+### IP / CIDR blocklisting
+
+For IPs or ranges you've already identified (e.g. from Cloudflare analytics), no GeoIP needed:
+
+```php
+// config/scanner-guard.php
+'ip_blocklist' => ['185.177.72.69', '185.177.72.0/24', '2001:db8::/32'],
+```
+
+Matching requests get `response_status` before any counting, checked with
+`Symfony\Component\HttpFoundation\IpUtils::checkIp()` (IPv4 + IPv6). These are not bans: no row is
+written and they never expire. `scanner-guard:export-denylist` always writes them as
+`deny <ip-or-cidr>; # static` lines, so with nginx sync on they never reach PHP at all. Invalid
+entries are skipped by the export (with a warning), so a typo can't break `nginx -t`.
+
 ### Manual review
 
 With the default `database` driver, every ban writes a row to `scanner_guard_bans` (`reason`,
@@ -344,6 +359,7 @@ return [
     'not_found_threshold' => null,
     'not_found_window' => 60,
     'asn_blocklist' => [],
+    'ip_blocklist' => [],
     'store' => null,
     'response_status' => 404,
     'sync_to_nginx' => false,

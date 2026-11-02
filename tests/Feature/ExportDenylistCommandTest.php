@@ -86,6 +86,21 @@ it('releases the export lock so the next export can run', function () {
     expect(app(ScannerGuard::class)->cache()->getStore()->lock('scanner-guard:export-denylist')->get())->toBeTrue();
 });
 
+it('writes valid ip_blocklist entries as static deny lines and skips invalid ones', function () {
+    config()->set('scanner-guard.ip_blocklist', ['185.177.72.69', '185.177.72.0/24', '2001:db8::/32', 'not-an-ip', '10.0.0.0/33', '1.2.3.4; allow all']);
+    Cache::flush();
+
+    $this->artisan('scanner-guard:export-denylist')->assertSuccessful();
+
+    $contents = File::get(storage_path('app/scanner-guard/denylist.conf'));
+    expect($contents)->toContain('deny 185.177.72.69; # static')
+        ->toContain('deny 185.177.72.0/24; # static')
+        ->toContain('deny 2001:db8::/32; # static')
+        ->not->toContain('not-an-ip')
+        ->not->toContain('/33')
+        ->not->toContain('allow all');
+});
+
 it('queues an export on every ban when sync_to_nginx is on', function () {
     Queue::fake();
     config()->set('scanner-guard.sync_to_nginx', true);

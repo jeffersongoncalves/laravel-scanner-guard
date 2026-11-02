@@ -51,6 +51,17 @@ class ExportDenylistCommand extends Command
         $lines = [];
         $skipped = 0;
 
+        foreach ($scannerGuard->ipBlocklist() as $entry) {
+            if (! $this->isValidRange($entry)) {
+                // Written as-is, a bad entry would fail `nginx -t` and the reload.
+                $this->warn("Skipped invalid ip_blocklist entry [{$entry}].");
+
+                continue;
+            }
+
+            $lines[] = "deny {$entry}; # static";
+        }
+
         foreach ($bans as $ban) {
             $ip = $scannerGuard->rawIpFor($ban->ip_hash);
 
@@ -92,6 +103,21 @@ class ExportDenylistCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * An IPv4/IPv6 address, optionally with a /prefix in range.
+     */
+    protected function isValidRange(string $entry): bool
+    {
+        [$address, $prefix] = array_pad(explode('/', $entry, 2), 2, null);
+
+        if (filter_var($address, FILTER_VALIDATE_IP) === false) {
+            return false;
+        }
+
+        return $prefix === null
+            || (ctype_digit($prefix) && (int) $prefix <= (str_contains((string) $address, ':') ? 128 : 32));
     }
 
     protected function reload(): void

@@ -46,6 +46,21 @@ it('short-circuits an already-banned ip without creating a second ban row', func
     expect(ScannerGuardBan::query()->count())->toBe(1);
 });
 
+it('rejects ip_blocklist ips and cidr ranges immediately, without counting or a ban row', function (string $ip) {
+    config(['scanner-guard.ip_blocklist' => ['185.177.72.69', '10.9.0.0/16', '2001:db8::/32']]);
+
+    $this->withServerVariables(['REMOTE_ADDR' => $ip])->get('/hello')->assertNotFound();
+
+    expect(ScannerGuardBan::query()->count())->toBe(0)
+        ->and(app(ScannerGuard::class)->registerHit($ip))->toBe(1);
+})->with(['185.177.72.69', '10.9.4.2', '2001:db8::1']);
+
+it('lets ips outside the ip_blocklist through', function () {
+    config(['scanner-guard.ip_blocklist' => ['10.9.0.0/16']]);
+
+    $this->withServerVariables(['REMOTE_ADDR' => '10.10.0.1'])->get('/hello')->assertOk();
+});
+
 it('bans immediately on an asn-blocklist match, without needing a scanner path', function () {
     $ip = '10.0.0.4';
 
