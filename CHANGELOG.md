@@ -2,12 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.7.1 - 2026-11-02
+
+### Fixed
+
+- `scanner-guard:export-denylist` writes one `deny` line per IP/CIDR. An escalated IP with several active ban rows now gets a single line carrying its latest expiry, and an IP that is also in the static blocklist only gets its `# static` line (#32, #33).
+
 ## 1.7.0 - 2026-11-02
 
 
 ---
 
 ### source: claude-code
+
 tags: [scratchpad]
 project: laravel-scanner-guard
 title: release-1.7.0
@@ -17,12 +24,15 @@ updated: 2026-11-02T19:29:54+00:00
 ### Added
 
 - **Database-backed IP / User-Agent blocklist** (#30, #31). With the `database` driver, entries in the new `scanner_guard_blocklist` table (`ScannerGuardBlocklistEntry`, types `ip` / `user_agent`) are added on top of `ip_blocklist` and `user_agent_blocklist.patterns`, so they change without a config edit or redeploy. DB IPs also reach the nginx export as `# static` lines.
+  
   - Cached under a versioned key in the scanner-guard store: two cache reads per check, no query. Read on every call, so queue workers and Octane pick up a change without re-booting.
   - Saving or deleting an entry refreshes the list and, with `sync_to_nginx`, queues the export, only after the transaction commits. A mass `query()->delete()` / `update()` fires no model events: call `ScannerGuard::blocklistChanged()` after one.
   - If the table is missing, the config lists still apply and the error is reported.
   
 - **`ScannerGuard::unban(string $ipHash): int`**. Deletes the active ban rows for that hash, forgets the cached ban and raw IP (so the IP passes at once, not after the cached ban expires) and, with `sync_to_nginx`, queues the export. Returns the number of rows deleted.
+  
 - `ScannerGuard::userAgentPatterns()` and `ScannerGuard::blocklistChanged()`.
+  
 
 ### Changed
 
@@ -35,6 +45,7 @@ Publish and run the new migration:
 ```bash
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
+
 
 ```
 It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
@@ -92,6 +103,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -143,6 +155,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
