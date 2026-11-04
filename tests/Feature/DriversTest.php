@@ -150,6 +150,15 @@ it('forwards the satellite offense and stores it on the central app', function (
     expect(ScannerGuardBan::query()->sole()->offense)->toBe(3);
 });
 
+it('stores one row when several satellites forward the same burst', function () {
+    enableServerRoute();
+
+    postBan(signedBan($this->scannerGuard, ['hit_count' => 3]))->assertCreated();
+    postBan(signedBan($this->scannerGuard, ['hit_count' => 4]))->assertCreated();
+
+    expect(ScannerGuardBan::query()->sole()->hit_count)->toBe(3);
+});
+
 it('rejects forwarded bans with a bad signature, a stale timestamp or a replay', function () {
     enableServerRoute();
 
