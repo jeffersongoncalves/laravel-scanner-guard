@@ -47,6 +47,25 @@ it('bans again right after a manual unban', function () {
     expect($this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3))->not->toBeNull();
 });
 
+it('releases the burst guard when a ban throws before it is stored', function () {
+    config(['scanner-guard.driver' => 'redis']);
+    expect(fn () => $this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3))
+        ->toThrow(InvalidArgumentException::class);
+
+    config(['scanner-guard.driver' => 'database']);
+
+    expect($this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3))->not->toBeNull();
+});
+
+it('never keeps the burst guard longer than the shortest ban', function () {
+    config(['scanner-guard.escalation' => [], 'scanner-guard.ban_duration' => 10]);
+
+    $this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+    $this->travel(11)->seconds();
+
+    expect($this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3))->not->toBeNull();
+});
+
 it('ignores prior bans older than the lookback', function () {
     $this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
     $this->travel(366)->days();

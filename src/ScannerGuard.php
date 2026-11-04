@@ -297,6 +297,11 @@ class ScannerGuard
             return null;
         }
 
+        return $this->releaseClaimOnFailure($ip, fn (): ?ScannerGuardBan => $this->applyBan($ip, $reason, $matchedValue, $hitCount, $path));
+    }
+
+    protected function applyBan(string $ip, string $reason, string $matchedValue, int $hitCount, ?string $path): ?ScannerGuardBan
+    {
         $bannedAt = now();
         $offense = $this->nextOffense($this->hashIp($ip), $reason);
         $expiresAt = $bannedAt->copy()->addSeconds($this->banDuration($offense));
@@ -350,9 +355,11 @@ class ScannerGuard
             return null;
         }
 
-        $this->cacheBan($ip, $expiresAt);
+        return $this->releaseClaimOnFailure($ip, function () use ($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense): ScannerGuardBan {
+            $this->cacheBan($ip, $expiresAt);
 
-        return $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense);
+            return $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense);
+        });
     }
 
     /**
@@ -362,8 +369,30 @@ class ScannerGuard
      */
     protected function claimBan(string $hash): bool
     {
-        // ponytail: fixed 60s, just needs to outlive a burst; the shortest ban is far longer.
-        return $this->cache()->add($this->banningKey($hash), true, 60);
+        // 60s outlives a burst; capped by the shortest ban so the guard never outlives a ban.
+        $ttl = min(60, (int) config('scanner-guard.ban_duration', 86400), ...array_map('intval', (array) config('scanner-guard.escalation', [])));
+
+        return $this->cache()->add($this->banningKey($hash), true, max($ttl, 1));
+    }
+
+    /**
+     * A ban that throws before it is stored must not keep the claim, or every
+     * retry for that IP would be dropped until it expires.
+     *
+     * @template T
+     *
+     * @param  callable(): T  $work
+     * @return T
+     */
+    protected function releaseClaimOnFailure(string $ip, callable $work): mixed
+    {
+        try {
+            return $work();
+        } catch (Throwable $e) {
+            $this->cache()->forget($this->banningKey($this->hashIp($ip)));
+
+            throw $e;
+        }
     }
 
     public function escalationEnabled(): bool
