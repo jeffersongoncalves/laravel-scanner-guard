@@ -124,10 +124,15 @@ Writes the cache ban + raw-IP cache entry, then per `scanner-guard.driver`: the 
 exception to "never log a raw IP" in this ecosystem, since it's operational security telemetry, not
 persisted user data).
 
-### `ScannerGuard::recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt): ScannerGuardBan`
+Idempotent per IP for 60 seconds (atomic cache `add()`): concurrent requests of one burst that all
+pass `isBanned()` before the first ban is cached get `null` and store nothing, so a burst counts as
+one offense. `unban()` clears this guard.
+
+### `ScannerGuard::recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null): ?ScannerGuardBan`
 
 Central-app side of the `http` driver (behind the `http.server.enabled` route): records the ban
-like a local one, hashing the IP with this app's salt.
+like a local one, hashing the IP with this app's salt. Same 60-second per-IP guard as `ban()`, so
+several satellites forwarding one burst store a single row (`null` for the duplicates).
 
 ### `ScannerGuard::rawIpFor(string $ipHash): ?string`
 

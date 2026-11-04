@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static string driver()
  * @method static string sign(string $timestamp, string $body)
  * @method static \JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan|null ban(string $ip, string $reason, string $matchedValue, int $hitCount, string|null $path = null)
- * @method static \JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, \Carbon\CarbonInterface $bannedAt, \Carbon\CarbonInterface $expiresAt)
+ * @method static \JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan|null recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, \Carbon\CarbonInterface $bannedAt, \Carbon\CarbonInterface $expiresAt, ?int $offense = null)
  * @method static int unban(string $ipHash)
  * @method static list<string> ipBlocklist()
  * @method static list<string> userAgentPatterns()

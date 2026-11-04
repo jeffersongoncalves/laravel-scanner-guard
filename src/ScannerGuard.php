@@ -170,6 +170,8 @@ class ScannerGuard
 
         $this->cache()->forget($this->banKey($ipHash));
         $this->cache()->forget($this->rawIpKey($ipHash));
+        // So a manual unban doesn't swallow a fresh ban of the same IP right after.
+        $this->cache()->forget($this->banningKey($ipHash));
         $this->queueNginxExport();
 
         return (int) $deleted;
@@ -287,8 +289,18 @@ class ScannerGuard
 
     /**
      * @return ScannerGuardBan|null the audit row, or null when the driver isn't "database"
+     *                              or another request of the same burst already banned this IP
      */
     public function ban(string $ip, string $reason, string $matchedValue, int $hitCount, ?string $path = null): ?ScannerGuardBan
+    {
+        if (! $this->claimBan($this->hashIp($ip))) {
+            return null;
+        }
+
+        return $this->releaseClaimOnFailure($ip, fn (): ?ScannerGuardBan => $this->applyBan($ip, $reason, $matchedValue, $hitCount, $path));
+    }
+
+    protected function applyBan(string $ip, string $reason, string $matchedValue, int $hitCount, ?string $path): ?ScannerGuardBan
     {
         $bannedAt = now();
         $offense = $this->nextOffense($this->hashIp($ip), $reason);
@@ -334,12 +346,53 @@ class ScannerGuard
     /**
      * Receiving side of the http driver: records a ban forwarded by a
      * satellite app exactly like a local one, raw IP kept in cache only.
+     * Null when this IP was already banned moments ago (e.g. several
+     * satellites behind a load balancer forwarding the same burst).
      */
-    public function recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null): ScannerGuardBan
+    public function recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null): ?ScannerGuardBan
     {
-        $this->cacheBan($ip, $expiresAt);
+        if (! $this->claimBan($this->hashIp($ip))) {
+            return null;
+        }
 
-        return $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense);
+        return $this->releaseClaimOnFailure($ip, function () use ($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense): ScannerGuardBan {
+            $this->cacheBan($ip, $expiresAt);
+
+            return $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense);
+        });
+    }
+
+    /**
+     * Concurrent requests of one burst all pass isBanned() before the first
+     * ban is cached, and each would store its own row with a climbing
+     * offense. add() is atomic: only the first caller wins.
+     */
+    protected function claimBan(string $hash): bool
+    {
+        // 60s outlives a burst; capped by the shortest ban so the guard never outlives a ban.
+        $ttl = min(60, (int) config('scanner-guard.ban_duration', 86400), ...array_map('intval', (array) config('scanner-guard.escalation', [])));
+
+        return $this->cache()->add($this->banningKey($hash), true, max($ttl, 1));
+    }
+
+    /**
+     * A ban that throws before it is stored must not keep the claim, or every
+     * retry for that IP would be dropped until it expires.
+     *
+     * @template T
+     *
+     * @param  callable(): T  $work
+     * @return T
+     */
+    protected function releaseClaimOnFailure(string $ip, callable $work): mixed
+    {
+        try {
+            return $work();
+        } catch (Throwable $e) {
+            $this->cache()->forget($this->banningKey($this->hashIp($ip)));
+
+            throw $e;
+        }
     }
 
     public function escalationEnabled(): bool
@@ -603,6 +656,11 @@ class ScannerGuard
     protected function banKey(string $hash): string
     {
         return "scanner-guard:ban:{$hash}";
+    }
+
+    protected function banningKey(string $hash): string
+    {
+        return "scanner-guard:banning:{$hash}";
     }
 
     protected function hitsKey(string $hash): string

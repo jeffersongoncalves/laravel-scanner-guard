@@ -105,6 +105,7 @@ it('writes one deny line per ip, keeping the latest expiry of escalated bans', f
     config(['scanner-guard.escalation' => [86400, 604800]]);
     $guard = app(ScannerGuard::class);
     $guard->ban('10.20.20.30', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+    $this->travel(2)->minutes(); // past the burst guard
     $guard->ban('10.20.20.30', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
 
     $latest = ScannerGuardBan::query()->max('expires_at');

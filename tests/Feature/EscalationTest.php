@@ -28,6 +28,44 @@ it('escalates each repeat ban one step and repeats the last step', function () {
     }
 });
 
+it('stores one ban for a burst of concurrent requests of one ip', function () {
+    // Concurrent requests all pass isBanned() before the first ban is cached.
+    $first = $this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, '.aws/*', 4);
+    $second = $this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, '.env*', 6);
+    $third = $this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_NOT_FOUND_FLOOD, '404', 21);
+
+    expect($first->offense)->toBe(1)
+        ->and($second)->toBeNull()
+        ->and($third)->toBeNull()
+        ->and(ScannerGuardBan::query()->count())->toBe(1);
+});
+
+it('bans again right after a manual unban', function () {
+    $this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+    $this->scannerGuard->unban($this->scannerGuard->hashIp('1.2.3.4'));
+
+    expect($this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3))->not->toBeNull();
+});
+
+it('releases the burst guard when a ban throws before it is stored', function () {
+    config(['scanner-guard.driver' => 'redis']);
+    expect(fn () => $this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3))
+        ->toThrow(InvalidArgumentException::class);
+
+    config(['scanner-guard.driver' => 'database']);
+
+    expect($this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3))->not->toBeNull();
+});
+
+it('never keeps the burst guard longer than the shortest ban', function () {
+    config(['scanner-guard.escalation' => [], 'scanner-guard.ban_duration' => 10]);
+
+    $this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+    $this->travel(11)->seconds();
+
+    expect($this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3))->not->toBeNull();
+});
+
 it('ignores prior bans older than the lookback', function () {
     $this->scannerGuard->ban('1.2.3.4', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
     $this->travel(366)->days();

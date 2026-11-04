@@ -261,6 +261,10 @@ return [
     | fast-path entry still leaves the app-layer ban intact (backed by the
     | database), but an evicted raw-IP export entry cannot be recovered.
     |
+    | With several app servers, use a store they all share (e.g. redis):
+    | hit counters and the one-ban-per-burst guard only coordinate
+    | requests that see the same store.
+    |
     */
     'store' => env('SCANNER_GUARD_STORE'),
 
