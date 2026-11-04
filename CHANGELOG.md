@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.7.2 - 2026-11-04
+
+### Fixed
+
+- **One ban per burst of concurrent requests from one IP** (#34, #35). Concurrent requests all passed `isBanned()` before the first ban was cached, so each one stored its own row and the escalation offense climbed with every row (1 → 4 in one second). `ban()` and `recordForwardedBan()` now claim a short per-IP guard with an atomic cache `add()`. Duplicates return `null` and store nothing. The guard lasts min(60s, shortest configured ban), is released when a ban throws before it is stored, and `unban()` clears it.
+- On the central app (http driver), several satellites forwarding the same burst now store a single row.
+
+### Changed
+
+- `recordForwardedBan()` now returns `?ScannerGuardBan`.
+- Multi-server setups should point `scanner-guard.store` at a cache shared by all servers (e.g. redis) so the burst guard and hit counters coordinate across them.
+
+### Note
+
+Duplicate rows already stored before this release are not collapsed. They age out with `escalation_lookback_days`.
+
 ## 1.7.1 - 2026-11-02
 
 ### Fixed
@@ -45,6 +61,7 @@ Publish and run the new migration:
 ```bash
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
+
 
 
 ```
@@ -104,6 +121,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -155,6 +173,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
