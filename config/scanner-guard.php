@@ -50,10 +50,22 @@ return [
     | hash_hmac('sha256', X-Timestamp.body, secret), rejected outside
     | `tolerance` seconds and never accepted twice.
     |
+    | `source` names this satellite in every forwarded ban (null = app.name);
+    | the central app stores it in the ban's `source` column (needs the
+    | add_source migration there). Null `source` on a row = banned locally.
+    |
+    | `secrets` (central app only): per-source secrets, e.g.
+    | ['shop' => env('SCANNER_GUARD_SECRET_SHOP')]. A listed source is only
+    | accepted when signed with its own secret, so one satellite can't
+    | forward bans under another's name. Unlisted sources fall back to
+    | `secret`; leave `secret` empty to accept listed sources only.
+    |
     */
     'http' => [
         'url' => env('SCANNER_GUARD_HTTP_URL'),
         'secret' => env('SCANNER_GUARD_HTTP_SECRET'),
+        'source' => env('SCANNER_GUARD_HTTP_SOURCE'),
+        'secrets' => [],
         'timeout' => env('SCANNER_GUARD_HTTP_TIMEOUT', 2),
         'tolerance' => env('SCANNER_GUARD_HTTP_TOLERANCE', 300),
 

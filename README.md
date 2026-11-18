@@ -369,9 +369,11 @@ On each satellite (no database):
 SCANNER_GUARD_DRIVER=http
 SCANNER_GUARD_HTTP_URL=https://central.example.com/scanner-guard/bans
 SCANNER_GUARD_HTTP_SECRET=a-long-random-shared-secret
+# optional, names this app in the central ban table (default: APP_NAME):
+SCANNER_GUARD_HTTP_SOURCE=shop
 ```
 
-On the central app (`database` driver, migrations run):
+On the central app (`database` driver, migrations run, including `add_source_to_scanner_guard_bans_table`):
 
 ```dotenv
 SCANNER_GUARD_HTTP_SERVER_ENABLED=true
@@ -381,11 +383,31 @@ SCANNER_GUARD_HTTP_SERVER_PATH=scanner-guard/bans
 ```
 
 Each ban is POSTed as JSON (`ip`, `reason`, `matched_value`, `hit_count`, `path`, `banned_at`,
-`expires_at`, `offense`) with `X-Timestamp` and `X-Signature: hash_hmac('sha256', timestamp.body, secret)`.
+`expires_at`, `offense`, `source`) with `X-Timestamp` and `X-Signature: hash_hmac('sha256', timestamp.body, secret)`.
 The central app rejects bad signatures and timestamps outside `http.tolerance` (default 300s) with
 `403`, and a replayed signature with `409`. It then records the ban exactly like a local one: its
 own salted `ip_hash` in the table, daily stats, and the raw IP in cache only — so its nginx export
 covers every satellite.
+
+`source` lands in the ban's `source` column, so you can tell which app each ban came from
+(`ScannerGuardBan::where('source', 'shop')`); bans made by the central app itself have `source`
+`null`. With one shared secret any satellite can claim any name. To make the name trustworthy,
+give each satellite its own secret and list them on the central app:
+
+```php
+// config/scanner-guard.php (central app)
+'http' => [
+    'secret' => null, // null = only the sources below are accepted
+    'secrets' => [
+        'shop' => env('SCANNER_GUARD_SECRET_SHOP'),
+        'blog' => env('SCANNER_GUARD_SECRET_BLOG'),
+    ],
+    // ...
+],
+```
+
+A listed source is rejected with `403` unless signed with its own secret. Unlisted sources fall
+back to `http.secret`, so you can move satellites over one at a time.
 
 The satellite sends the request after the response (`defer()`), with `http.timeout` (default 2s);
 a failure is logged and never affects the request or the local (cache) ban.
