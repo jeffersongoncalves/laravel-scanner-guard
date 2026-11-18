@@ -6,6 +6,7 @@ namespace JeffersonGoncalves\ScannerGuard\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Validator;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -31,7 +32,9 @@ class RecordForwardedBanController
             403
         );
 
-        $data = $request->validate([
+        // The signed JSON body only: $request->validate() would also read the
+        // unsigned query string, letting it fill in a missing field (e.g. source).
+        $data = Validator::make($request->json()->all(), [
             'ip' => ['required', 'ip'],
             'reason' => ['required', 'string', 'max:30'],
             'matched_value' => ['required', 'string', 'max:255'],
@@ -40,7 +43,7 @@ class RecordForwardedBanController
             'expires_at' => ['required', 'date', 'after:banned_at'],
             'offense' => ['nullable', 'integer', 'min:1', 'max:65535'],
             'source' => ['nullable', 'string', 'max:100'],
-        ]);
+        ])->validate();
 
         // A signature is only ever accepted once inside its tolerance window
         // (consumed after validation, so a rejected payload can be resent).

@@ -197,6 +197,22 @@ it('only accepts a source listed in http.secrets when signed with its own secret
     expect(ScannerGuardBan::query()->pluck('source')->sort()->values()->all())->toBe(['blog', 'shop']);
 });
 
+it('reads the forwarded ban from the signed body only, never the query string', function () {
+    config(['scanner-guard.http.secrets' => ['shop' => 'shop-secret']]);
+    enableServerRoute();
+
+    // Signed with the shared secret, no source in the body: a query source must not sneak in.
+    [$body, $headers] = signedBan($this->scannerGuard);
+    $server = collect($headers)->mapWithKeys(fn ($value, $key) => ['HTTP_'.strtoupper(str_replace('-', '_', $key)) => $value])->all();
+
+    $this->call('POST', '/scanner-guard/bans?source=shop&offense=9', [], [], [], $server + ['CONTENT_TYPE' => 'application/json'], $body)
+        ->assertCreated();
+
+    $ban = ScannerGuardBan::query()->sole();
+    expect($ban->source)->toBeNull();
+    expect($ban->offense)->toBeNull();
+});
+
 it('stores one row when several satellites forward the same burst', function () {
     enableServerRoute();
 
