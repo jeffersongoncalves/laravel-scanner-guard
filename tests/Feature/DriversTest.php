@@ -150,6 +150,53 @@ it('forwards the satellite offense and stores it on the central app', function (
     expect(ScannerGuardBan::query()->sole()->offense)->toBe(3);
 });
 
+it('forwards the satellite source and stores it on the central app', function () {
+    config(['scanner-guard.driver' => 'http', 'app.name' => 'Shop']);
+    Http::fake();
+    $this->withoutDefer();
+
+    $this->scannerGuard->ban('10.20.0.7', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+    config(['scanner-guard.http.source' => 'blog']);
+    $this->scannerGuard->ban('10.20.0.8', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+
+    Http::assertSent(fn (Request $request): bool => $request['ip'] === '10.20.0.7' && $request['source'] === 'Shop');
+    Http::assertSent(fn (Request $request): bool => $request['ip'] === '10.20.0.8' && $request['source'] === 'blog');
+
+    config(['scanner-guard.driver' => 'database']);
+    enableServerRoute();
+
+    postBan(signedBan($this->scannerGuard, ['source' => 'blog']))->assertCreated();
+    $this->scannerGuard->ban('10.20.0.9', ScannerGuardBan::REASON_SCANNER_PATH, 'wp-admin*', 3);
+
+    expect(ScannerGuardBan::query()->pluck('source', 'ip_hash')->all())->toBe([
+        $this->scannerGuard->hashIp('198.51.100.7') => 'blog',
+        $this->scannerGuard->hashIp('10.20.0.9') => null,
+    ]);
+});
+
+it('only accepts a source listed in http.secrets when signed with its own secret', function () {
+    config(['scanner-guard.http.secrets' => ['shop' => 'shop-secret']]);
+    enableServerRoute();
+
+    $sign = function (array $payload, string $secret): array {
+        [$body, $headers] = signedBan($this->scannerGuard, $payload);
+        $headers['X-Signature'] = $this->scannerGuard->sign($headers['X-Timestamp'], $body, $secret);
+
+        return [$body, $headers];
+    };
+
+    // The shared secret can't forge a listed source.
+    postBan($sign(['source' => 'shop'], 'shared-secret'))->assertForbidden();
+    postBan($sign(['source' => 'shop'], 'shop-secret'))->assertCreated();
+
+    // Unlisted sources fall back to the shared secret, and are refused once it's empty.
+    postBan($sign(['ip' => '198.51.100.8', 'source' => 'blog'], 'shared-secret'))->assertCreated();
+    config(['scanner-guard.http.secret' => null]);
+    postBan($sign(['ip' => '198.51.100.9', 'source' => 'blog'], ''))->assertForbidden();
+
+    expect(ScannerGuardBan::query()->pluck('source')->sort()->values()->all())->toBe(['blog', 'shop']);
+});
+
 it('stores one row when several satellites forward the same burst', function () {
     enableServerRoute();
 

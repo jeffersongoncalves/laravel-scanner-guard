@@ -53,9 +53,23 @@ class ScannerGuard
     /**
      * HMAC shared by the http driver client and the receiving route.
      */
-    public function sign(string $timestamp, string $body): string
+    public function sign(string $timestamp, string $body, ?string $secret = null): string
     {
-        return hash_hmac('sha256', $timestamp.$body, (string) config('scanner-guard.http.secret'));
+        return hash_hmac('sha256', $timestamp.$body, $secret ?? (string) config('scanner-guard.http.secret'));
+    }
+
+    /**
+     * Receiving side: a source listed in http.secrets must be signed with its
+     * own secret, so one satellite can't forward bans under another's name.
+     * Any other source falls back to the shared http.secret.
+     */
+    public function secretFor(mixed $source): string
+    {
+        $secrets = (array) config('scanner-guard.http.secrets', []);
+
+        return (string) (is_string($source) && array_key_exists($source, $secrets)
+            ? $secrets[$source]
+            : config('scanner-guard.http.secret'));
     }
 
     /**
@@ -319,6 +333,7 @@ class ScannerGuard
                 'banned_at' => $bannedAt->toIso8601String(),
                 'expires_at' => $expiresAt->toIso8601String(),
                 'offense' => $offense,
+                'source' => (string) (config('scanner-guard.http.source') ?? config('app.name')),
             ]),
             'cache' => fn () => null,
             default => throw new InvalidArgumentException("Unsupported scanner-guard driver [{$this->driver()}]."),
@@ -349,16 +364,16 @@ class ScannerGuard
      * Null when this IP was already banned moments ago (e.g. several
      * satellites behind a load balancer forwarding the same burst).
      */
-    public function recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null): ?ScannerGuardBan
+    public function recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null): ?ScannerGuardBan
     {
         if (! $this->claimBan($this->hashIp($ip))) {
             return null;
         }
 
-        return $this->releaseClaimOnFailure($ip, function () use ($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense): ScannerGuardBan {
+        return $this->releaseClaimOnFailure($ip, function () use ($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense, $source): ScannerGuardBan {
             $this->cacheBan($ip, $expiresAt);
 
-            return $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense);
+            return $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense, $source);
         });
     }
 
@@ -552,9 +567,9 @@ class ScannerGuard
         $this->cache()->put($this->rawIpKey($hash), $ip, $expiresAt);
     }
 
-    protected function storeBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null): ScannerGuardBan
+    protected function storeBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null): ScannerGuardBan
     {
-        // offense only when set, so apps that never ran the add_offense migration keep working.
+        // offense/source only when set, so apps that never ran the add_offense/add_source migrations keep working.
         $ban = ScannerGuardBan::query()->create(array_filter([
             'ip_hash' => $this->hashIp($ip),
             'reason' => $reason,
@@ -563,6 +578,7 @@ class ScannerGuard
             'banned_at' => $bannedAt,
             'expires_at' => $expiresAt,
             'offense' => $offense,
+            'source' => $source,
         ], fn ($value) => $value !== null));
 
         $this->recordDailyStats($ban);

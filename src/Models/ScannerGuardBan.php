@@ -23,6 +23,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon $banned_at
  * @property Carbon $expires_at
  * @property int|null $offense escalation step (1 = first offense), null when the ban didn't escalate
+ * @property string|null $source satellite app that forwarded the ban (http driver), null when banned locally
  * @property-read bool $is_active
  *
  * @method static \Illuminate\Database\Eloquent\Builder<static> active()
@@ -47,6 +48,7 @@ class ScannerGuardBan extends Model
         'banned_at',
         'expires_at',
         'offense',
+        'source',
     ];
 
     protected $casts = [

@@ -20,12 +20,14 @@ class RecordForwardedBanController
         $timestamp = (string) $request->header('X-Timestamp');
         $signature = (string) $request->header('X-Signature');
         $tolerance = (int) config('scanner-guard.http.tolerance', 300);
+        // The claimed source only picks the secret; the signature then proves it.
+        $secret = $scannerGuard->secretFor($request->json('source'));
 
         abort_unless(
-            filled(config('scanner-guard.http.secret'))
+            filled($secret)
                 && ctype_digit($timestamp)
                 && abs(now()->timestamp - (int) $timestamp) <= $tolerance
-                && hash_equals($scannerGuard->sign($timestamp, $request->getContent()), $signature),
+                && hash_equals($scannerGuard->sign($timestamp, $request->getContent(), $secret), $signature),
             403
         );
 
@@ -37,6 +39,7 @@ class RecordForwardedBanController
             'banned_at' => ['required', 'date'],
             'expires_at' => ['required', 'date', 'after:banned_at'],
             'offense' => ['nullable', 'integer', 'min:1', 'max:65535'],
+            'source' => ['nullable', 'string', 'max:100'],
         ]);
 
         // A signature is only ever accepted once inside its tolerance window
@@ -52,6 +55,7 @@ class RecordForwardedBanController
             Carbon::parse($data['banned_at'])->setTimezone(config('app.timezone')),
             Carbon::parse($data['expires_at'])->setTimezone(config('app.timezone')),
             isset($data['offense']) ? (int) $data['offense'] : null,
+            $data['source'] ?? null,
         );
 
         return response()->noContent(201);
