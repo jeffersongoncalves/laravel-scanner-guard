@@ -50,6 +50,11 @@ return [
     | hash_hmac('sha256', X-Timestamp.body, secret), rejected outside
     | `tolerance` seconds and never accepted twice.
     |
+    | `pull` (satellite): schedules scanner-guard:pull-denylist every minute,
+    | fetching the central app's active bans, ip_blocklist and user-agent
+    | patterns from a GET on `url`. A failed pull keeps the last list; with
+    | sync_to_nginx each pull also rewrites this app's nginx denylist.
+    |
     | `source` names this satellite in every forwarded ban (null = app.name);
     | the central app stores it in the ban's `source` column (needs the
     | add_source migration there). Null `source` on a row = banned locally.
@@ -65,6 +70,7 @@ return [
         'url' => env('SCANNER_GUARD_HTTP_URL'),
         'secret' => env('SCANNER_GUARD_HTTP_SECRET'),
         'source' => env('SCANNER_GUARD_HTTP_SOURCE'),
+        'pull' => env('SCANNER_GUARD_HTTP_PULL', false),
         'secrets' => [],
         'timeout' => env('SCANNER_GUARD_HTTP_TIMEOUT', 2),
         'tolerance' => env('SCANNER_GUARD_HTTP_TOLERANCE', 300),

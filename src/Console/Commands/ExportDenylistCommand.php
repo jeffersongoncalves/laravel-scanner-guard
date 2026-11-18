@@ -27,8 +27,9 @@ class ExportDenylistCommand extends Command
 
     public function handle(ScannerGuard $scannerGuard): int
     {
-        if ($scannerGuard->driver() !== 'database') {
-            $this->warn('Skipped: scanner-guard:export-denylist requires the "database" driver.');
+        // http: exports what scanner-guard:pull-denylist fetched from the central app.
+        if (! in_array($scannerGuard->driver(), ['database', 'http'], true)) {
+            $this->warn('Skipped: scanner-guard:export-denylist requires the "database" or "http" driver.');
 
             return self::SUCCESS;
         }
@@ -48,7 +49,10 @@ class ExportDenylistCommand extends Command
     {
         // Latest expiry first: an escalated IP keeps several active rows, the
         // first one seen per IP is the one written. id breaks ties for a stable file.
-        $bans = ScannerGuardBan::query()->active()->orderByDesc('expires_at')->orderBy('id')->get();
+        $bans = $scannerGuard->driver() === 'database'
+            ? ScannerGuardBan::query()->active()->orderByDesc('expires_at')->orderBy('id')->get()
+                ->map(fn (ScannerGuardBan $ban): array => ['ip_hash' => $ban->ip_hash, 'reason' => $ban->reason, 'expires_at' => $ban->expires_at->toIso8601String()])
+            : collect($scannerGuard->pulledBans())->map(fn (array $ban, string $hash): array => ['ip_hash' => $hash] + $ban)->values();
 
         // Keyed by IP/CIDR: one deny line each, static entries win over bans.
         $lines = [];
@@ -66,7 +70,7 @@ class ExportDenylistCommand extends Command
         }
 
         foreach ($bans as $ban) {
-            $ip = $scannerGuard->rawIpFor($ban->ip_hash);
+            $ip = $scannerGuard->rawIpFor($ban['ip_hash']);
 
             if ($ip === null) {
                 $skipped++;
@@ -74,7 +78,7 @@ class ExportDenylistCommand extends Command
                 continue;
             }
 
-            $lines[$ip] ??= "deny {$ip}; # {$ban->reason}, expires {$ban->expires_at->toIso8601String()}";
+            $lines[$ip] ??= "deny {$ip}; # {$ban['reason']}, expires {$ban['expires_at']}";
         }
 
         $path = base_path((string) ($this->option('path') ?? config('scanner-guard.nginx.path', 'storage/app/scanner-guard/denylist.conf')));
