@@ -38,7 +38,13 @@ class BlockScannerRequests
         $status = (int) config('scanner-guard.response_status', 404);
 
         // Cheapest checks first: config-only static blocklist, then already banned.
-        if ($this->scannerGuard->isIpBlocked($ip) || $this->scannerGuard->isBanned($ip)) {
+        if ($this->scannerGuard->isIpBlocked($ip)) {
+            return response('', $status);
+        }
+
+        if ($this->scannerGuard->isBanned($ip)) {
+            $this->scannerGuard->recoverRawIp($ip);
+
             return response('', $status);
         }
 

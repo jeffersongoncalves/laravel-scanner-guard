@@ -342,7 +342,9 @@ The chosen tradeoff: at ban time, the raw IP is cached separately (keyed by the 
 `ban_duration`) — **cache only, never the permanent table**. `ScannerGuard::denylistEntries()` reads
 active bans from the database, then looks up each one's raw IP in that cache entry. If the cache
 entry has expired or been evicted (a `cache:clear`, an "array" driver that doesn't survive between
-requests, LRU eviction under memory pressure, ...), that ban is silently left out of the sinks.
+requests, LRU eviction under memory pressure, ...), that ban is silently left out of the sinks until
+the IP comes back: a banned request whose raw IP is missing caches it again until the ban expires and
+re-syncs the sinks (`database` driver, at most one lookup a minute per IP).
 
 This means: the **database never contains a reversible IP**, and the **app-layer ban still applies
 correctly regardless** (the fast-path/DB-fallback ban check in `isBanned()` only ever needs the
