@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
@@ -84,6 +85,31 @@ it('leaves a cached raw ip alone and skips the lookup', function () {
 
     expect($queries)->toBe(0)
         ->and($this->guard->rawIpFor($ban->ip_hash))->toBe('203.0.113.53');
+});
+
+it('keeps answering 404 and reports when the recovery lookup fails', function () {
+    banAndLoseRawIp('203.0.113.55');
+    $this->mock(ExceptionHandler::class, function ($mock) {
+        $mock->shouldReceive('report')->once();
+    });
+    // The ban itself is answered from the cache; only the recovery lookup hits a missing table.
+    // No DDL: on MySQL it would commit RefreshDatabase's transaction.
+    config(['scanner-guard.table' => 'scanner_guard_bans_missing']);
+
+    $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.55'])->get('/hello')->assertNotFound();
+});
+
+it('does not overwrite a raw ip cached meanwhile by a newer ban', function () {
+    $ban = banAndLoseRawIp('203.0.113.56');
+    $key = 'scanner-guard:raw-ip:'.$ban->ip_hash;
+    // A newer ban lands between the recovery's has() check and its write.
+    ScannerGuardBan::retrieved(function () use ($key) {
+        app(ScannerGuard::class)->cache()->put($key, 'from-newer-ban', now()->addWeek());
+    });
+
+    $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.56'])->get('/hello')->assertNotFound();
+
+    expect($this->guard->cache()->get($key))->toBe('from-newer-ban');
 });
 
 it('does nothing with a driver other than database', function () {

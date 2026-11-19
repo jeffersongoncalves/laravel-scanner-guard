@@ -696,14 +696,19 @@ class ScannerGuard
             return;
         }
 
-        $ban = ScannerGuardBan::query()->where('ip_hash', $hash)->active()->latest('expires_at')->first();
+        try {
+            $ban = ScannerGuardBan::query()->where('ip_hash', $hash)->active()->latest('expires_at')->first();
+        } catch (Throwable $e) {
+            // Best effort: a database outage must not turn the banned response into a 500.
+            report($e);
 
-        if ($ban === null) {
             return;
         }
 
-        $this->cache()->put($this->rawIpKey($hash), $ip, $ban->expires_at);
-        $this->queueSync();
+        // add(), not put(): a ban stored meanwhile (e.g. escalated, longer) keeps its own expiry.
+        if ($ban !== null && $this->cache()->add($this->rawIpKey($hash), $ip, $ban->expires_at)) {
+            $this->queueSync();
+        }
     }
 
     /**
