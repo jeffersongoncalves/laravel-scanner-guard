@@ -47,13 +47,14 @@ use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
 - **Audit trail**: every ban writes a `ScannerGuardBan` row (hashed IP only, never raw) with the
   default `database` driver.
 - **No-database drivers**: `driver` = `cache` (cache-only bans) or `http` (forward bans to a central
-  app over HMAC-signed requests; that app enables `http.server.enabled`). Migrations, stats and the
-  nginx export are `database`-only.
-- **nginx export**: `php artisan scanner-guard:export-denylist` writes active bans as `deny <ip>;`
-  lines, best-effort (see the package README's "Privacy tradeoff" section for why this can't be
-  100% reliable by design — it needs a cached raw IP, not the permanent hashed record). With
-  `sync_to_nginx` on, each ban queues a re-export (`nginx.export_on_ban`); `nginx.reload_command`
-  reloads nginx only when the file changed.
+  app over HMAC-signed requests; that app enables `http.server.enabled`). Migrations and stats are
+  `database`-only.
+- **Denylist sinks**: `scanner-guard.sinks` lists `Contracts\DenylistSink` classes (separate
+  packages: `laravel-scanner-guard-nginx`, `laravel-scanner-guard-cloudflare`; Traefik pulls via
+  `laravel-scanner-guard-traefik`). `php artisan scanner-guard:sync-denylist` pushes the static
+  `ip_blocklist` + active bans to each, best-effort (see the package README's "Privacy tradeoff":
+  it needs a cached raw IP, not the permanent hashed record). With sinks set it runs every minute
+  and each ban queues a sync (`sync_on_ban`).
 
 ### Configuration
 
@@ -78,4 +79,4 @@ return [
 - Never add legitimate app routes (e.g. your own admin panel path) to `scanner_paths` — a real
   logged-in user hammering their own dashboard would eventually get banned too.
 - Prefer a durable cache store (`redis`, `file`) over `array` in `scanner-guard.store` if you plan
-  to use the nginx export — an `array` cache never survives past the current request.
+  to use a denylist sink — an `array` cache never survives past the current request.

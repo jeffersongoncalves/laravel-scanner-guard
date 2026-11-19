@@ -1,6 +1,6 @@
 ---
 name: laravel-scanner-guard-development
-description: Extend or debug JeffersonGoncalves\ScannerGuard — scanner path patterns, ban lifecycle, ASN blocklisting, and the nginx denylist export.
+description: Extend or debug JeffersonGoncalves\ScannerGuard — scanner path patterns, ban lifecycle, ASN blocklisting, and the denylist sinks (nginx, Cloudflare, Traefik).
 ---
 
 # Laravel Scanner Guard Development
@@ -11,7 +11,7 @@ Use this skill when:
 
 - Adding/tuning `scanner_paths` patterns for a specific app's traffic
 - Debugging why an IP was (or wasn't) banned
-- Working with the nginx denylist export and its cache-eviction tradeoff
+- Working with the denylist sinks and their cache-eviction tradeoff
 - Extending `ScannerGuard`'s ban/hit-counting logic
 
 ## Core Concepts
@@ -48,9 +48,9 @@ overwrites that entry, so a fresh ban takes effect immediately.
 `ScannerGuardBan::ip_hash` is `IpAnonymizer::hash($ip)` (salted sha256, from
 `jeffersongoncalves/laravel-visitor-fingerprint`) — irreversible by design. The raw IP is cached
 separately at ban time (`scanner-guard:raw-ip:{hash}`, TTL = `ban_duration`) purely so
-`scanner-guard:export-denylist` can write a real nginx `deny` line. If that cache entry is gone
-(flush, eviction, "array" driver), the export skips that ban — the app-layer protection is
-unaffected (it only needs the hash), only the nginx-side export lags.
+`scanner-guard:sync-denylist` can hand the denylist sinks a real IP. If that cache entry is gone
+(flush, eviction, "array" driver), the sinks miss that ban — the app-layer protection is
+unaffected (it only needs the hash), only the pre-PHP block lags.
 
 ```php
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
@@ -95,11 +95,11 @@ Check `ScannerGuardBan::query()->where('ip_hash', $hash)->first()` for the `matc
 that triggered it — it's almost always an overly broad `scanner_paths` entry matching a real route
 in the host app. Narrow the pattern rather than raising `ban_threshold` globally.
 
-### The nginx export is missing entries I know are banned
+### A sink is missing entries I know are banned
 
 Expected when the cache store doesn't retain the `scanner-guard:raw-ip:{hash}` entry for the full
 `ban_duration` (an `array` driver, a `cache:clear`, LRU eviction). Switch `scanner-guard.store` to a
-durable store (`redis`/`file`) if the nginx export matters to you.
+durable store (`redis`/`file`) if the sinks matter to you.
 
 ## API Reference
 
@@ -136,4 +136,9 @@ several satellites forwarding one burst store a single row (`null` for the dupli
 
 ### `ScannerGuard::rawIpFor(string $ipHash): ?string`
 
-Best-effort raw IP lookup for the export command.
+Best-effort raw IP lookup behind `denylistEntries()`.
+
+### `ScannerGuard::denylistEntries(): array`
+
+What every `DenylistSink` receives: valid `ip_blocklist` entries (reason `static`, `expires_at`
+`null`) first, then one entry per banned IP whose raw IP is still cached, latest expiry first.

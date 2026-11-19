@@ -20,8 +20,8 @@ it('registers the scanner_guard_ban_daily_stats migration', function () {
     expect(Schema::hasTable('scanner_guard_ban_daily_stats'))->toBeTrue();
 });
 
-it('registers the export-denylist command', function () {
-    expect(Artisan::all())->toHaveKey('scanner-guard:export-denylist');
+it('registers the sync-denylist command', function () {
+    expect(Artisan::all())->toHaveKey('scanner-guard:sync-denylist');
 });
 
 it('registers the aggregate-and-prune command', function () {

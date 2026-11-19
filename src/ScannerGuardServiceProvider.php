@@ -7,8 +7,8 @@ namespace JeffersonGoncalves\ScannerGuard;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Route;
 use JeffersonGoncalves\ScannerGuard\Console\Commands\AggregateAndPruneCommand;
-use JeffersonGoncalves\ScannerGuard\Console\Commands\ExportDenylistCommand;
 use JeffersonGoncalves\ScannerGuard\Console\Commands\PullDenylistCommand;
+use JeffersonGoncalves\ScannerGuard\Console\Commands\SyncDenylistCommand;
 use JeffersonGoncalves\ScannerGuard\Http\Controllers\DenylistController;
 use JeffersonGoncalves\ScannerGuard\Http\Controllers\RecordForwardedBanController;
 use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
@@ -28,7 +28,7 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
             ->hasMigration('create_scanner_guard_blocklist_table')
             ->hasMigration('add_source_to_scanner_guard_bans_table')
             ->hasCommands([
-                ExportDenylistCommand::class,
+                SyncDenylistCommand::class,
                 AggregateAndPruneCommand::class,
                 PullDenylistCommand::class,
             ]);
@@ -57,7 +57,7 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
         $this->app->booted(function (): void {
             $schedule = $this->app->make(Schedule::class);
 
-            // Pulls also refresh the satellite's nginx file when sync_to_nginx is on.
+            // Pulls also re-sync the satellite's sinks.
             if (config('scanner-guard.driver', 'database') === 'http' && config('scanner-guard.http.pull', false)) {
                 $schedule->command(PullDenylistCommand::class)->everyMinute()->withoutOverlapping();
             }
@@ -68,10 +68,10 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
                 return;
             }
 
-            if (config('scanner-guard.sync_to_nginx', false)) {
-                // Every minute so expired bans leave nginx promptly; cheap, since the
-                // file is only rewritten (and nginx reloaded) when its content changes.
-                $schedule->command(ExportDenylistCommand::class)->everyMinute()->withoutOverlapping();
+            if ((array) config('scanner-guard.sinks', []) !== []) {
+                // Every minute so expired bans leave the sinks promptly; sinks are
+                // expected to skip the write when nothing changed.
+                $schedule->command(SyncDenylistCommand::class)->everyMinute()->withoutOverlapping();
             }
 
             if (config('scanner-guard.auto_prune', true)) {

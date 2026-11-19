@@ -11,7 +11,7 @@ use JeffersonGoncalves\ScannerGuard\ScannerGuard;
 /**
  * A runtime blocklist entry, added on top of the config `ip_blocklist` /
  * `user_agent_blocklist.patterns` (database driver only). Saving or
- * deleting a model refreshes the cached list and re-exports nginx; a mass
+ * deleting a model refreshes the cached list and re-syncs the sinks; a mass
  * query()->delete() / update() skips model events, so call
  * ScannerGuard::blocklistChanged() yourself after one.
  *

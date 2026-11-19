@@ -262,7 +262,7 @@ it('skips the database-only commands and schedule for other drivers', function (
     config(['scanner-guard.driver' => 'cache']);
 
     $this->artisan('scanner-guard:aggregate-and-prune')->expectsOutputToContain('Skipped')->assertSuccessful();
-    $this->artisan('scanner-guard:export-denylist')->expectsOutputToContain('Skipped')->assertSuccessful();
+    $this->artisan('scanner-guard:sync-denylist')->expectsOutputToContain('Skipped')->assertSuccessful();
 
     putenv('SCANNER_GUARD_DRIVER=cache');
     $_ENV['SCANNER_GUARD_DRIVER'] = 'cache';
