@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.0.2 - 2026-11-19
+
+### Fixed
+
+- Raw IP recovery (2.0.1) re-caches with an atomic add, so a ban stored meanwhile (e.g. an escalated one with a longer expiry) keeps its own entry.
+- A database error during that recovery is reported instead of turning the banned response into a 500 (#44).
+
 ## 2.0.1 - 2026-11-19
 
 ### Fixed
@@ -126,6 +133,7 @@ php artisan migrate
 
 
 
+
 ```
 It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
 
@@ -187,6 +195,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -238,6 +247,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
