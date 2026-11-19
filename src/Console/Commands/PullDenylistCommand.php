@@ -11,7 +11,7 @@ use Throwable;
 
 /**
  * Satellite side of the http driver: pulls the central app's active bans and
- * static lists, then refreshes the local nginx denylist when sync_to_nginx is on.
+ * static lists, then re-syncs the local denylist sinks when any are configured.
  */
 class PullDenylistCommand extends Command
 {
@@ -39,8 +39,8 @@ class PullDenylistCommand extends Command
 
         $this->info(sprintf('Pulled %d active ban(s).', count($scannerGuard->pulledBans())));
 
-        if (config('scanner-guard.sync_to_nginx', false)) {
-            $this->call(ExportDenylistCommand::class);
+        if ((array) config('scanner-guard.sinks', []) !== []) {
+            $this->call(SyncDenylistCommand::class);
         }
 
         return self::SUCCESS;

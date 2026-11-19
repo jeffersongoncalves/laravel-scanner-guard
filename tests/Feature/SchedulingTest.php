@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use Illuminate\Console\Scheduling\Schedule;
+use JeffersonGoncalves\ScannerGuard\ScannerGuardServiceProvider;
+use JeffersonGoncalves\ScannerGuard\Tests\Fixtures\RecordingSink;
 
 it('self-schedules aggregate-and-prune daily by default', function () {
     $events = app(Schedule::class)->events();
@@ -14,20 +16,18 @@ it('self-schedules aggregate-and-prune daily by default', function () {
     expect($event)->not->toBeNull();
 });
 
-it('schedules export-denylist every minute when sync_to_nginx is on', function () {
-    putenv('SCANNER_GUARD_SYNC_TO_NGINX=true');
-    $_ENV['SCANNER_GUARD_SYNC_TO_NGINX'] = 'true';
-
-    $this->refreshApplication();
-
-    $event = collect(app(Schedule::class)->events())->first(
-        fn ($event) => str_contains($event->command ?? '', 'scanner-guard:export-denylist')
+it('schedules sync-denylist every minute only when sinks are configured', function () {
+    $syncEvent = fn () => collect(app(Schedule::class)->events())->first(
+        fn ($event) => str_contains($event->command ?? '', 'scanner-guard:sync-denylist')
     );
 
-    expect($event?->expression)->toBe('* * * * *');
+    expect($syncEvent())->toBeNull();
 
-    putenv('SCANNER_GUARD_SYNC_TO_NGINX');
-    unset($_ENV['SCANNER_GUARD_SYNC_TO_NGINX']);
+    // The app is already booted, so the provider's booted() callback runs at once.
+    config(['scanner-guard.sinks' => [RecordingSink::class]]);
+    (new ScannerGuardServiceProvider($this->app))->packageBooted();
+
+    expect($syncEvent()?->expression)->toBe('* * * * *');
 });
 
 it('does not schedule aggregate-and-prune when disabled via env', function () {

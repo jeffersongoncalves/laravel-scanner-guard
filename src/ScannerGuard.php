@@ -15,7 +15,8 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
-use JeffersonGoncalves\ScannerGuard\Jobs\ExportDenylist;
+use JeffersonGoncalves\ScannerGuard\Contracts\DenylistSink;
+use JeffersonGoncalves\ScannerGuard\Jobs\SyncDenylist;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBlocklistEntry;
 use JeffersonGoncalves\VisitorFingerprint\Support\IpAnonymizer;
@@ -26,8 +27,8 @@ use Throwable;
  * Core ban/hit-counting logic, shared by the middleware and the export
  * command. Every cache key is keyed by the salted IP hash rather than the
  * raw IP, EXCEPT the deliberate "raw-ip" entry written at ban time, whose
- * whole purpose is to let scanner-guard:export-denylist reproduce a real IP
- * for nginx — see the README's "Privacy tradeoff" section.
+ * whole purpose is to let scanner-guard:sync-denylist hand a real IP to the
+ * denylist sinks — see the README's "Privacy tradeoff" section.
  */
 class ScannerGuard
 {
@@ -106,6 +107,76 @@ class ScannerGuard
     }
 
     /**
+     * What every DenylistSink receives: valid ip_blocklist entries first (they
+     * win over a ban of the same IP), then one entry per banned IP whose raw
+     * IP is still cached, latest expiry first. Database bans with the
+     * "database" driver, the last pull with "http", nothing else otherwise.
+     *
+     * @return list<array{ip: string, reason: string, expires_at: string|null}>
+     */
+    public function denylistEntries(): array
+    {
+        $entries = [];
+
+        foreach ($this->ipBlocklist() as $range) {
+            if (! $this->isValidRange($range)) {
+                // Passed on as-is, a bad entry would break the sink (e.g. fail `nginx -t`).
+                Log::warning('scanner-guard: skipped invalid ip_blocklist entry', ['entry' => $range]);
+
+                continue;
+            }
+
+            $entries[$range] = ['ip' => $range, 'reason' => 'static', 'expires_at' => null];
+        }
+
+        // An escalated IP keeps several active rows; the first one seen per IP
+        // (latest expiry, id breaking ties) is the one passed on.
+        $bans = match ($this->driver()) {
+            'database' => ScannerGuardBan::query()->active()->orderByDesc('expires_at')->orderBy('id')->get()
+                ->map(fn (ScannerGuardBan $ban): array => ['ip_hash' => $ban->ip_hash, 'reason' => $ban->reason, 'expires_at' => $ban->expires_at->toIso8601String()])
+                ->all(),
+            'http' => collect($this->pulledBans())->map(fn (array $ban, string $hash): array => ['ip_hash' => $hash] + $ban)->values()->all(),
+            default => [],
+        };
+
+        foreach ($bans as $ban) {
+            $ip = $this->rawIpFor($ban['ip_hash']);
+
+            if ($ip !== null) {
+                $entries[$ip] ??= ['ip' => $ip, 'reason' => $ban['reason'], 'expires_at' => $ban['expires_at']];
+            }
+        }
+
+        return array_values($entries);
+    }
+
+    /**
+     * An IPv4/IPv6 address, optionally with a /prefix in range.
+     */
+    public function isValidRange(string $entry): bool
+    {
+        [$address, $prefix] = array_pad(explode('/', $entry, 2), 2, null);
+
+        if (filter_var($address, FILTER_VALIDATE_IP) === false) {
+            return false;
+        }
+
+        return $prefix === null
+            || (ctype_digit($prefix) && (int) $prefix <= (str_contains((string) $address, ':') ? 128 : 32));
+    }
+
+    /**
+     * @return list<DenylistSink>
+     */
+    public function sinks(): array
+    {
+        return array_values(array_map(
+            fn (string $sink): DenylistSink => app($sink),
+            (array) config('scanner-guard.sinks', []),
+        ));
+    }
+
+    /**
      * Satellite side: fetches the central denylist and applies it. Throws on
      * a failed request, leaving the last pulled list in place.
      */
@@ -173,7 +244,7 @@ class ScannerGuard
     }
 
     /**
-     * Active pulled bans, for the satellite's nginx export.
+     * Active pulled bans, for the satellite's denylist sinks.
      *
      * @return array<string, array{reason: string, expires_at: string}> keyed by ip_hash
      */
@@ -271,15 +342,15 @@ class ScannerGuard
     }
 
     /**
-     * Drops the cached database blocklist and re-exports nginx. Called by
-     * ScannerGuardBlocklistEntry on save/delete.
+     * Drops the cached database blocklist and re-syncs the denylist sinks.
+     * Called by ScannerGuardBlocklistEntry on save/delete.
      */
     public function blocklistChanged(): void
     {
         // A new version, not a forget(): a read still in flight from before the
         // change can only fill the old version's key, never the current one.
         $this->cache()->forever($this->blocklistVersionKey(), Str::random(16));
-        $this->queueNginxExport();
+        $this->queueSync();
     }
 
     /**
@@ -299,7 +370,7 @@ class ScannerGuard
         $this->cache()->forget($this->rawIpKey($ipHash));
         // So a manual unban doesn't swallow a fresh ban of the same IP right after.
         $this->cache()->forget($this->banningKey($ipHash));
-        $this->queueNginxExport();
+        $this->queueSync();
 
         return (int) $deleted;
     }
@@ -689,7 +760,7 @@ class ScannerGuard
 
         $this->cache()->put($this->banKey($hash), true, $expiresAt);
         // Deliberately the one place a raw IP is cached — required so
-        // scanner-guard:export-denylist can write a real `deny <ip>;` line.
+        // scanner-guard:sync-denylist can hand sinks a real IP.
         // See README for why this can't live in the (hashed) database row.
         $this->cache()->put($this->rawIpKey($hash), $ip, $expiresAt);
     }
@@ -710,35 +781,35 @@ class ScannerGuard
 
         $this->recordDailyStats($ban);
 
-        if (config('scanner-guard.nginx.export_on_ban', true)) {
-            $this->queueNginxExport();
+        if (config('scanner-guard.sync_on_ban', true)) {
+            $this->queueSync();
         }
 
         return $ban;
     }
 
     /**
-     * Keeps the nginx denylist within seconds of the ban table and blocklist
-     * instead of a minute behind. A queue failure is logged, never breaks the
-     * ban, unban or blocklist change.
+     * Keeps the sinks within seconds of the ban table and blocklist instead
+     * of a minute behind. A queue failure is logged, never breaks the ban,
+     * unban or blocklist change.
      */
-    protected function queueNginxExport(): void
+    protected function queueSync(): void
     {
-        if (! config('scanner-guard.sync_to_nginx', false)) {
+        if ((array) config('scanner-guard.sinks', []) === []) {
             return;
         }
 
         try {
-            ExportDenylist::dispatch();
+            SyncDenylist::dispatch();
         } catch (Throwable $e) {
-            Log::error('scanner-guard: failed to queue nginx export', ['exception' => $e->getMessage()]);
+            Log::error('scanner-guard: failed to queue denylist sync', ['exception' => $e->getMessage()]);
         }
     }
 
     /**
      * Deferred until after the response is sent, so the remote call never
      * slows down or fails the request; failures are only logged. The raw IP
-     * is sent (the central app needs it for the nginx export) but its own
+     * is sent (the central app needs it for its denylist sinks) but its own
      * salt hashes it — a satellite's ip_hash wouldn't match there.
      *
      * @param  array<string, mixed>  $payload

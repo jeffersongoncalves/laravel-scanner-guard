@@ -12,7 +12,7 @@ use Illuminate\Support\Carbon;
 /**
  * Permanent audit trail of bans. `ip_hash` is a salted sha256 (see
  * JeffersonGoncalves\VisitorFingerprint\Support\IpAnonymizer::hash()) —
- * never the raw IP, by design (see README for the export-to-nginx tradeoff
+ * never the raw IP, by design (see README for the denylist-sink tradeoff
  * this implies).
  *
  * @property int $id

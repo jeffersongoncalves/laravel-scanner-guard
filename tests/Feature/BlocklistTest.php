@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
-use JeffersonGoncalves\ScannerGuard\Jobs\ExportDenylist;
+use JeffersonGoncalves\ScannerGuard\Jobs\SyncDenylist;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBlocklistEntry;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
@@ -90,17 +90,17 @@ it('falls back to the config lists when the blocklist query fails, e.g. migratio
     }
 });
 
-it('queues an nginx export on every blocklist change when sync_to_nginx is on', function () {
+it('queues a denylist sync on every blocklist change when sinks are configured', function () {
     Queue::fake();
-    config(['scanner-guard.sync_to_nginx' => true]);
+    config(['scanner-guard.sinks' => [RecordingSink::class]]);
 
     $entry = blockEntry(ScannerGuardBlocklistEntry::TYPE_IP, '10.30.0.5');
-    Queue::assertPushed(ExportDenylist::class);
+    Queue::assertPushed(SyncDenylist::class);
 
     Cache::flush(); // releases the unique-job lock the faked job never processes
     Queue::fake();
     $entry->delete();
-    Queue::assertPushed(ExportDenylist::class);
+    Queue::assertPushed(SyncDenylist::class);
 });
 
 it('keeps an existing blocklist table and its rows when the migration runs again or rolls back', function () {
@@ -125,9 +125,9 @@ it('does not let a read started before a change re-cache the old list', function
     expect($guard->isIpBlocked('10.30.0.10'))->toBeTrue();
 });
 
-it('neither refreshes nor exports a blocklist change that is rolled back', function () {
+it('neither refreshes nor syncs a blocklist change that is rolled back', function () {
     Queue::fake();
-    config(['scanner-guard.sync_to_nginx' => true]);
+    config(['scanner-guard.sinks' => [RecordingSink::class]]);
     $guard = app(ScannerGuard::class);
     $guard->ipBlocklist();
     $version = $guard->cache()->get('scanner-guard:blocklist-version');
@@ -146,13 +146,13 @@ it('neither refreshes nor exports a blocklist change that is rolled back', funct
     Queue::assertNothingPushed();
 });
 
-it('exports blocklist changes and unbans even with export_on_ban off', function () {
+it('syncs blocklist changes and unbans even with sync_on_ban off', function () {
     Queue::fake();
-    config(['scanner-guard.sync_to_nginx' => true, 'scanner-guard.nginx.export_on_ban' => false]);
+    config(['scanner-guard.sinks' => [RecordingSink::class], 'scanner-guard.sync_on_ban' => false]);
 
     app(ScannerGuard::class)->unban(app(ScannerGuard::class)->hashIp('10.30.0.12'));
 
-    Queue::assertPushed(ExportDenylist::class);
+    Queue::assertPushed(SyncDenylist::class);
 });
 
 it('unban() lifts a cached ban at once and returns the deleted row count', function () {
@@ -167,18 +167,18 @@ it('unban() lifts a cached ban at once and returns the deleted row count', funct
     $this->withServerVariables(['REMOTE_ADDR' => '10.30.0.7'])->get('/hello')->assertOk();
 });
 
-it('unban() queues an nginx export when sync_to_nginx is on', function () {
+it('unban() queues a denylist sync when sinks are configured', function () {
     Queue::fake();
-    config(['scanner-guard.sync_to_nginx' => true]);
+    config(['scanner-guard.sinks' => [RecordingSink::class]]);
 
     app(ScannerGuard::class)->unban(app(ScannerGuard::class)->hashIp('10.30.0.8'));
 
-    Queue::assertPushed(ExportDenylist::class);
+    Queue::assertPushed(SyncDenylist::class);
 });
 
-it('never lets a failing export dispatch break a blocklist change or unban()', function () {
+it('never lets a failing sync dispatch break a blocklist change or unban()', function () {
     Log::spy();
-    config(['scanner-guard.sync_to_nginx' => true, 'queue.default' => 'missing']);
+    config(['scanner-guard.sinks' => [RecordingSink::class], 'queue.default' => 'missing']);
     $guard = app(ScannerGuard::class);
 
     $entry = blockEntry(ScannerGuardBlocklistEntry::TYPE_IP, '10.30.0.9');
@@ -187,5 +187,5 @@ it('never lets a failing export dispatch break a blocklist change or unban()', f
     $entry->delete();
     expect($guard->unban($guard->hashIp('10.30.0.9')))->toBe(0);
 
-    Log::shouldHaveReceived('error')->with('scanner-guard: failed to queue nginx export', Mockery::any())->times(3);
+    Log::shouldHaveReceived('error')->with('scanner-guard: failed to queue denylist sync', Mockery::any())->times(3);
 });

@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Http\Client\Request;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
 use JeffersonGoncalves\ScannerGuard\ScannerGuardServiceProvider;
+use JeffersonGoncalves\ScannerGuard\Tests\Fixtures\RecordingSink;
 
 beforeEach(function () {
     $this->scannerGuard = app(ScannerGuard::class);
@@ -141,21 +141,18 @@ it('keeps the last pulled list when the central app is unreachable', function ()
     expect($this->scannerGuard->isIpBlocked('185.177.72.69'))->toBeTrue();
 });
 
-it('writes the satellite nginx denylist from the pull when sync_to_nginx is on', function () {
-    $path = 'storage/app/scanner-guard/pull-test.conf';
-    config(['scanner-guard.driver' => 'http', 'scanner-guard.sync_to_nginx' => true, 'scanner-guard.nginx.path' => $path]);
+it('syncs the satellite sinks from the pull when sinks are configured', function () {
+    RecordingSink::reset();
+    config(['scanner-guard.driver' => 'http', 'scanner-guard.sinks' => [RecordingSink::class]]);
     $ban = activeBan('198.51.100.7');
     fakeCentral(centralDenylist([$ban], ['185.177.72.0/24']));
 
-    try {
-        $this->artisan('scanner-guard:pull-denylist')->assertSuccessful();
+    $this->artisan('scanner-guard:pull-denylist')->assertSuccessful();
 
-        expect(File::get(base_path($path)))->toBe(
-            'deny 185.177.72.0/24; # static'.PHP_EOL."deny 198.51.100.7; # scanner_path, expires {$ban['expires_at']}".PHP_EOL
-        );
-    } finally {
-        File::delete(base_path($path));
-    }
+    expect(RecordingSink::last())->toBe([
+        ['ip' => '185.177.72.0/24', 'reason' => 'static', 'expires_at' => null],
+        ['ip' => '198.51.100.7', 'reason' => 'scanner_path', 'expires_at' => $ban['expires_at']],
+    ]);
 });
 
 it('ignores pulled lists with a driver other than http', function () {

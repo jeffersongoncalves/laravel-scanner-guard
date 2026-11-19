@@ -165,9 +165,9 @@ For IPs or ranges you've already identified (e.g. from Cloudflare analytics), no
 
 Matching requests get `response_status` before any counting, checked with
 `Symfony\Component\HttpFoundation\IpUtils::checkIp()` (IPv4 + IPv6). These are not bans: no row is
-written and they never expire. `scanner-guard:export-denylist` always writes them as
-`deny <ip-or-cidr>; # static` lines, so with nginx sync on they never reach PHP at all. Invalid
-entries are skipped by the export (with a warning), so a typo can't break `nginx -t`.
+written and they never expire. Every [denylist sink](#blocking-before-php-denylist-sinks) always
+gets them (reason `static`), so with a sink configured they never reach PHP at all. Invalid entries
+are skipped before the sync (with a logged warning), so a typo can't break `nginx -t`.
 
 ### User-Agent blocklisting
 
@@ -186,7 +186,7 @@ Patterns are `fnmatch()`-style, case-insensitive, matched against the full UA st
 nothing exempts verified crawlers, and a broad pattern such as `*curl*` also locks out your own
 scripts, uptime monitors and health checks. `ban` (default) rejects and records a ban with reason
 `user_agent` (stored with the matched pattern, or `empty`), so it escalates, shows up in the daily
-stats and reaches the nginx export like any other ban; `reject` only answers with
+stats and reaches the denylist sinks like any other ban; `reject` only answers with
 `response_status`, nothing recorded.
 
 ### Runtime blocklist (database)
@@ -205,9 +205,9 @@ ScannerGuardBlocklistEntry::query()->create(['type' => ScannerGuardBlocklistEntr
 
 The rows are cached in the scanner-guard store under a version key, so a check costs two cache
 reads and no query. Saving or deleting a model, once its transaction commits, moves to a new
-version (the next check, in any web, queue or Octane worker, sees the change) and, with
-`sync_to_nginx`, queues the nginx export (`nginx.export_on_ban` only gates exports on new bans). A
-rolled-back change does neither. A mass `query()->delete()` / `update()` fires no model events: call
+version (the next check, in any web, queue or Octane worker, sees the change) and, with `sinks`
+configured, queues a denylist sync (`sync_on_ban` only gates syncs on new bans). A rolled-back
+change does neither. A mass `query()->delete()` / `update()` fires no model events: call
 `ScannerGuard::blocklistChanged()` after one. If the table is missing, the config lists still apply
 and the error is reported.
 
@@ -224,7 +224,7 @@ ScannerGuard::unban($ban->ip_hash); // number of active ban rows deleted
 
 Deleting the ban row alone isn't enough: the cached ban would keep answering "banned" until it
 expires. `unban()` deletes the active rows for that hash (`database` driver), forgets the cached ban
-and its raw IP, and with `sync_to_nginx` queues the nginx export. A failing export dispatch is
+and its raw IP, and with `sinks` configured queues a denylist sync. A failing sync dispatch is
 logged, never thrown.
 
 ### Manual review
@@ -239,49 +239,54 @@ use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 ScannerGuardBan::query()->active()->latest('banned_at')->get();
 ```
 
-### Exporting to nginx
+### Blocking before PHP: denylist sinks
 
-```bash
-php artisan scanner-guard:export-denylist
-# or a custom path:
-php artisan scanner-guard:export-denylist --path=storage/app/scanner-guard/denylist.conf
+The middleware answers banned IPs from the cache, but each request still boots PHP. A **sink**
+pushes the current denylist to something that blocks earlier. Sinks ship as separate packages:
+
+| Package | Blocks at | How |
+|---|---|---|
+| [`laravel-scanner-guard-nginx`](https://github.com/jeffersongoncalves/laravel-scanner-guard-nginx) | nginx | writes an `include`d `deny <ip>;` file, then reloads nginx |
+| [`laravel-scanner-guard-cloudflare`](https://github.com/jeffersongoncalves/laravel-scanner-guard-cloudflare) | Cloudflare edge | replaces a Custom IP List used by a WAF rule |
+| [`laravel-scanner-guard-traefik`](https://github.com/jeffersongoncalves/laravel-scanner-guard-traefik) | Traefik | serves the list to Traefik's HTTP provider (pulled, not a sink) |
+
+Install one, then list its class:
+
+```php
+// config/scanner-guard.php
+'sinks' => [
+    \JeffersonGoncalves\ScannerGuardNginx\NginxSink::class,
+    \JeffersonGoncalves\ScannerGuardCloudflare\CloudflareSink::class,
+],
 ```
 
-Writes every currently-active ban as an nginx `deny <ip>;` line. `include` it from your server
-block to close the loop with edge-level blocking:
+`php artisan scanner-guard:sync-denylist` then pushes every valid `ip_blocklist` entry (reason
+`static`, no expiry) plus one entry per actively banned IP (latest expiry) to each sink. With
+`sinks` non-empty it self-schedules every minute, so expired bans drop off; sinks skip the write
+when nothing changed. Every new ban (local or forwarded) also queues a unique `SyncDenylist` job
+(`scanner-guard.sync_on_ban`, env `SCANNER_GUARD_SYNC_ON_BAN`, default `true`), so sinks follow the
+ban table within seconds; a burst of bans collapses into one sync. `unban()` and runtime blocklist
+changes always queue one. Every sync runs under one cache lock (`scanner-guard.store`), so a slower
+sync never overwrites a newer snapshot. A failing sink is logged and the command exits non-zero, but
+the other sinks still run.
 
-```nginx
-server {
-    include storage/app/scanner-guard/denylist.conf;
-    # ...
+Writing your own: implement `JeffersonGoncalves\ScannerGuard\Contracts\DenylistSink`.
+
+```php
+use JeffersonGoncalves\ScannerGuard\Contracts\DenylistSink;
+
+class MyFirewallSink implements DenylistSink
+{
+    /** @param list<array{ip: string, reason: string, expires_at: string|null}> $entries */
+    public function sync(array $entries): void
+    {
+        // Replace the whole remote list with $entries. Throw on failure.
+    }
 }
 ```
 
-Nothing schedules this automatically unless you opt in via `scanner-guard.sync_to_nginx = true`
-(env `SCANNER_GUARD_SYNC_TO_NGINX`), which self-schedules the export every minute (cheap: the file
-is only rewritten when its content changes) so expired bans leave nginx promptly — left off by default
-because writing files to disk on a schedule is far more deployment-specific (permissions, shared
-vs. per-instance storage, whether nginx actually reloads the file) than a DB-only aggregate job.
-
-With `sync_to_nginx` on, every new ban (local or forwarded) also queues a unique
-`ExportDenylist` job (`scanner-guard.nginx.export_on_ban`, env
-`SCANNER_GUARD_NGINX_EXPORT_ON_BAN`, default `true`), so the file follows the ban table within
-seconds; a burst of bans collapses into one export. The scheduled run stays as a safety net and is
-what drops expired bans. Every export runs under one cache lock (`scanner-guard.store`), so a
-slower export never overwrites a newer snapshot. The default path comes from `scanner-guard.nginx.path`
-(env `SCANNER_GUARD_NGINX_PATH`) so the scheduled run and the job agree on it; `--path` still
-overrides it. The file is written to a temp file and renamed over the target, so nginx never reads
-a half-written list.
-
-nginx only re-reads an `include`d file on reload. Set `scanner-guard.nginx.reload_command`
-(env `SCANNER_GUARD_NGINX_RELOAD_COMMAND`, e.g. `sudo nginx -s reload`) and it runs after an
-export **only when the file content changed**; a non-zero exit or a timeout is logged, never thrown. The PHP
-user (and your queue worker, if different) must be allowed to run it without a password, e.g. in
-`/etc/sudoers.d/scanner-guard` (Forge's user is `forge`):
-
-```
-forge ALL=NOPASSWD: /usr/sbin/nginx -s reload
-```
+`ScannerGuard::denylistEntries()` returns the same list, for consumers that pull instead of being
+pushed to (that's how the Traefik package works).
 
 ### Aggregating and pruning
 
@@ -322,7 +327,7 @@ ScannerGuard::dailyStats(14); // Collection of ['date', 'bans_count', 'hits_tota
 > days by `banned_at`.
 
 Self-schedules daily unless you opt out via `scanner-guard.auto_prune = false` (env
-`SCANNER_GUARD_AUTO_PRUNE`) — on by default, since (unlike `sync_to_nginx`) writing to the DB has no
+`SCANNER_GUARD_AUTO_PRUNE`) — on by default, since (unlike the denylist sinks) writing to the DB has no
 deployment-specific footgun.
 
 #### Privacy tradeoff
@@ -330,36 +335,36 @@ deployment-specific footgun.
 `scanner_guard_bans` only ever stores a salted hash of the IP (`ip_hash`, via
 `jeffersongoncalves/laravel-visitor-fingerprint`'s `IpAnonymizer::hash()`) — never the raw address,
 matching this ecosystem's other packages (`laravel-page-visits`, `laravel-short-url`). A hash can't
-be reversed back into an IP, which is exactly the point — but an nginx `deny` line needs a real IP.
+be reversed back into an IP, which is exactly the point — but an nginx `deny` line or a Cloudflare
+list item needs a real IP.
 
 The chosen tradeoff: at ban time, the raw IP is cached separately (keyed by the same hash, TTL =
-`ban_duration`) — **cache only, never the permanent table**. `scanner-guard:export-denylist` reads
+`ban_duration`) — **cache only, never the permanent table**. `ScannerGuard::denylistEntries()` reads
 active bans from the database, then looks up each one's raw IP in that cache entry. If the cache
 entry has expired or been evicted (a `cache:clear`, an "array" driver that doesn't survive between
-requests, LRU eviction under memory pressure, ...), that ban is silently skipped from the nginx
-export — the command logs how many were skipped, but does not fail.
+requests, LRU eviction under memory pressure, ...), that ban is silently left out of the sinks.
 
 This means: the **database never contains a reversible IP**, and the **app-layer ban still applies
 correctly regardless** (the fast-path/DB-fallback ban check in `isBanned()` only ever needs the
-hash). The nginx denylist is best-effort and may lag or miss entries after a cache flush. If you
-rely heavily on the nginx export, prefer a durable cache store (`redis`, `file`) over `array` via
+hash). The sinks are best-effort and may miss entries after a cache flush. If you rely on them,
+prefer a durable cache store (`redis`, `file`) over `array` via
 `scanner-guard.store`.
 
 ### Running without a database
 
 Hit counting and the ban fast-path always run on the cache store; only the audit trail, daily
-stats, nginx export and the `isBanned()` DB fallback need SQL. Pick where bans go with
+stats and the `isBanned()` DB fallback need SQL. Pick where bans go with
 `scanner-guard.driver` (env `SCANNER_GUARD_DRIVER`):
 
-| Driver | Bans stored in | Audit trail / stats / nginx export | Needs migrations |
-|---|---|---|---|
-| `database` (default) | cache + `scanner_guard_bans` | yes | yes |
-| `http` | cache, forwarded to a central app | on the central app | no |
-| `cache` | cache only, TTL = `ban_duration` | no | no |
+| Driver | Bans stored in | Audit trail / stats | Denylist sinks | Needs migrations |
+|---|---|---|---|---|
+| `database` (default) | cache + `scanner_guard_bans` | yes | yes | yes |
+| `http` | cache, forwarded to a central app | on the central app | from the last pull | no |
+| `cache` | cache only, TTL = `ban_duration` | no | no | no |
 
 With `http` or `cache`, a ban doesn't survive a cache flush, `ScannerGuard::ban()` returns `null`,
-and `aggregate-and-prune` / `export-denylist` are neither scheduled nor run (they print a skip
-notice).
+and `aggregate-and-prune` is neither scheduled nor run (it prints a skip notice);
+`sync-denylist` only runs on `http` satellites, after each pull.
 
 #### `http`: one central app for many satellites
 
@@ -386,8 +391,8 @@ Each ban is POSTed as JSON (`ip`, `reason`, `matched_value`, `hit_count`, `path`
 `expires_at`, `offense`, `source`) with `X-Timestamp` and `X-Signature: hash_hmac('sha256', timestamp.body, secret)`.
 The central app rejects bad signatures and timestamps outside `http.tolerance` (default 300s) with
 `403`, and a replayed signature with `409`. It then records the ban exactly like a local one: its
-own salted `ip_hash` in the table, daily stats, and the raw IP in cache only — so its nginx export
-covers every satellite.
+own salted `ip_hash` in the table, daily stats, and the raw IP in cache only — so its denylist
+sinks cover every satellite.
 
 `source` lands in the ban's `source` column, so you can tell which app each ban came from
 (`ScannerGuardBan::where('source', 'shop')`); bans made by the central app itself have `source`
@@ -429,8 +434,8 @@ user-agent patterns, including its runtime (database) blocklist. The satellite:
 - caches each ban until its expiry, so the middleware blocks it;
 - merges the static lists into its own `ip_blocklist` / user-agent patterns;
 - lifts bans the central app no longer lists (e.g. unbanned there);
-- with `sync_to_nginx`, rewrites its own nginx denylist after each pull (the satellite has no
-  database, so this replaces the scheduled export).
+- with `sinks` configured, re-syncs its own sinks after each pull (the satellite has no database,
+  so this replaces the scheduled sync).
 
 A failed pull is logged, exits non-zero and keeps the last list. The response carries raw IPs and
 isn't signed itself, so use an `https` URL. Only bans whose raw IP is still in the central cache
@@ -467,12 +472,8 @@ return [
     'user_agent_blocklist' => ['block_empty' => false, 'patterns' => [], 'action' => 'ban'],
     'store' => null,
     'response_status' => 404,
-    'sync_to_nginx' => false,
-    'nginx' => [
-        'path' => 'storage/app/scanner-guard/denylist.conf',
-        'export_on_ban' => true,
-        'reload_command' => null,
-    ],
+    'sinks' => [], // DenylistSink classes, see "Blocking before PHP"
+    'sync_on_ban' => true,
     'daily_stats_table' => 'scanner_guard_ban_daily_stats',
     'retention_days' => 90,
     'purge_expired_after_days' => 0,

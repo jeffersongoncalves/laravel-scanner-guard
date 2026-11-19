@@ -9,20 +9,20 @@ use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Support\Facades\Artisan;
-use JeffersonGoncalves\ScannerGuard\Console\Commands\ExportDenylistCommand;
+use JeffersonGoncalves\ScannerGuard\Console\Commands\SyncDenylistCommand;
 
 /**
- * Queued on every new ban. Unique until it starts, so a burst of bans
- * collapses into one export, while a ban landing mid-export still queues
- * the next one.
+ * Queued on every ban, unban and blocklist change. Unique until it starts, so
+ * a burst of bans collapses into one sync, while a ban landing mid-sync still
+ * queues the next one.
  */
-class ExportDenylist implements ShouldBeUniqueUntilProcessing, ShouldQueue
+class SyncDenylist implements ShouldBeUniqueUntilProcessing, ShouldQueue
 {
     use Dispatchable;
     use Queueable;
 
     public function handle(): void
     {
-        Artisan::call(ExportDenylistCommand::class);
+        Artisan::call(SyncDenylistCommand::class);
     }
 }
