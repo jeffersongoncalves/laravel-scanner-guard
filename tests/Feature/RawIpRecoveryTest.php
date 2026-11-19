@@ -92,15 +92,20 @@ it('keeps answering 404 and reports when the recovery lookup fails', function ()
     $this->mock(ExceptionHandler::class, function ($mock) {
         $mock->shouldReceive('report')->once();
     });
-    // The ban itself is answered from the cache; only the recovery lookup hits a missing table.
-    // No DDL: on MySQL it would commit RefreshDatabase's transaction.
-    config(['scanner-guard.table' => 'scanner_guard_bans_missing']);
+    // The ban itself is answered from the cache; only the recovery lookup hits the database,
+    // here an unreachable one. A failing query on the test connection itself would abort
+    // pgsql's RefreshDatabase transaction, and DDL would commit MySQL's.
+    $testing = config('database.default');
+    $this->guard->ipBlocklist(); // cache the runtime blocklist, so only the recovery queries
+    config([
+        'database.connections.unreachable' => ['driver' => 'sqlite', 'database' => '/nonexistent/scanner-guard.sqlite'],
+        'database.default' => 'unreachable',
+    ]);
 
     try {
         $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.55'])->get('/hello')->assertNotFound();
     } finally {
-        // MySQL's teardown rolls the migrations back, reading this config.
-        config(['scanner-guard.table' => 'scanner_guard_bans']);
+        config(['database.default' => $testing]);
     }
 });
 
