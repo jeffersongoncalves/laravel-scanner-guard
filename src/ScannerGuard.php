@@ -677,6 +677,36 @@ class ScannerGuard
     }
 
     /**
+     * A banned IP seen again whose raw IP is gone from the cache (a flush, an
+     * eviction) gets it cached back until its ban expires, and the sinks are
+     * re-synced, so the ban reaches them again. Database driver only: an http
+     * satellite gets raw IPs from the pull, and the cache driver loses the
+     * ban together with its raw IP. At most one lookup a minute per IP, so a
+     * scanner hammering the app can't turn a missing row into a query storm.
+     */
+    public function recoverRawIp(string $ip): void
+    {
+        if ($this->driver() !== 'database') {
+            return;
+        }
+
+        $hash = $this->hashIp($ip);
+
+        if ($this->cache()->has($this->rawIpKey($hash)) || ! $this->cache()->add($this->rawIpCheckKey($hash), true, 60)) {
+            return;
+        }
+
+        $ban = ScannerGuardBan::query()->where('ip_hash', $hash)->active()->latest('expires_at')->first();
+
+        if ($ban === null) {
+            return;
+        }
+
+        $this->cache()->put($this->rawIpKey($hash), $ip, $ban->expires_at);
+        $this->queueSync();
+    }
+
+    /**
      * One entry per day for the last $days days (today included, oldest
      * first), zero-filled for days without a stats row. Today's entry is the
      * live counter bumped at ban time.
@@ -759,8 +789,8 @@ class ScannerGuard
         $hash = $this->hashIp($ip);
 
         $this->cache()->put($this->banKey($hash), true, $expiresAt);
-        // Deliberately the one place a raw IP is cached — required so
-        // scanner-guard:sync-denylist can hand sinks a real IP.
+        // Deliberately where a raw IP is cached (recoverRawIp() re-caches a
+        // lost one) — required so scanner-guard:sync-denylist can hand sinks a real IP.
         // See README for why this can't live in the (hashed) database row.
         $this->cache()->put($this->rawIpKey($hash), $ip, $expiresAt);
     }
@@ -895,6 +925,11 @@ class ScannerGuard
     protected function rawIpKey(string $hash): string
     {
         return "scanner-guard:raw-ip:{$hash}";
+    }
+
+    protected function rawIpCheckKey(string $hash): string
+    {
+        return "scanner-guard:raw-ip-check:{$hash}";
     }
 
     protected function blocklistKey(string $version): string
