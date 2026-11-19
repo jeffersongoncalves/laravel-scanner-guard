@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.8.0 - 2026-11-19
+
+### Added
+
+- **Record which satellite forwarded each ban** (#37, #38). With the `http` driver, satellites send `source` (`SCANNER_GUARD_HTTP_SOURCE`, default `APP_NAME`) in the signed payload, and the central app stores it in the new nullable, indexed `source` column. Bans made by the central app itself keep `source = null`.
+  
+- **Per-source secrets** on the central app: `scanner-guard.http.secrets` (`[shop => ..., blog => ...]`). A listed source is only accepted when signed with its own secret, so one satellite cannot forward bans under another name. Unlisted sources fall back to `http.secret`; set it to `null` to accept listed sources only.
+  
+- **Distribute the central denylist to satellites** (#39, #40). The central app now also answers a signed `GET` on `http.server.path` with its active bans, `ip_blocklist` and user-agent patterns (config + database). With `SCANNER_GUARD_HTTP_PULL=true`, satellites run `scanner-guard:pull-denylist` every minute:
+  
+  - each pulled ban is cached until it expires, so the middleware blocks it;
+  - the static lists are merged into the satellite lists;
+  - bans lifted on the central app (unban) are lifted on the satellite;
+  - with `sync_to_nginx`, the satellite rewrites its own nginx denylist after each pull.
+  
+  A failed pull is logged, exits non-zero and keeps the last list.
+  
+
+### Changed
+
+- `scanner-guard:export-denylist` now also runs on the `http` driver, exporting the pulled bans.
+
+### Fixed
+
+- Forwarded bans are validated from the signed JSON body only. Before, the unsigned query string could fill in a field the body left out (e.g. `?source=`).
+
+### Upgrade
+
+1. On the central app, publish and run the new `add_source_to_scanner_guard_bans_table` migration **before** upgrading satellites. Without the column, the central app cannot store bans from upgraded satellites (the satellite logs the error and keeps its local ban).
+2. Use an `https` URL: the denylist response carries raw IPs and is not signed itself.
+
 ## 1.7.2 - 2026-11-04
 
 ### Fixed
@@ -64,6 +95,7 @@ php artisan migrate
 
 
 
+
 ```
 It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
 
@@ -122,6 +154,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -173,6 +206,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
