@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.0.0 - 2026-11-19
+
+### Denylist sinks
+
+The nginx export moved out of the core. scanner-guard now pushes the denylist to pluggable **sinks**, each its own package:
+
+- [laravel-scanner-guard-nginx](https://github.com/jeffersongoncalves/laravel-scanner-guard-nginx): the old `sync_to_nginx` export (same file, lines and env vars)
+- [laravel-scanner-guard-cloudflare](https://github.com/jeffersongoncalves/laravel-scanner-guard-cloudflare): keeps a Cloudflare Custom IP List in sync for a WAF rule
+- [laravel-scanner-guard-traefik](https://github.com/jeffersongoncalves/laravel-scanner-guard-traefik): serves the list to Traefik's HTTP provider
+
+#### Added
+
+- `Contracts\DenylistSink` and `ScannerGuard::denylistEntries()`
+- `scanner-guard:sync-denylist`: runs every configured sink under one lock; a failing sink is logged and the others still run
+- `sinks` and `sync_on_ban` config keys
+
+#### Breaking
+
+- Removed `sync_to_nginx`, the `nginx` config block, `scanner-guard:export-denylist`, `ExportDenylistCommand` and `ExportDenylist` (now `SyncDenylistCommand` / `SyncDenylist`)
+
+See [UPGRADE.md](https://github.com/jeffersongoncalves/laravel-scanner-guard/blob/main/UPGRADE.md) (#42).
+
 ## 1.8.0 - 2026-11-19
 
 ### Added
@@ -96,6 +118,7 @@ php artisan migrate
 
 
 
+
 ```
 It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
 
@@ -155,6 +178,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -206,6 +230,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
