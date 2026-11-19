@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.0.3 - 2026-11-19
+
+### Fixed
+
+- http driver: satellites now forward their bans to the central app. The POST ran in a `defer()` callback, which Laravel skips when the response is >= 400, and the banning request always answers 404 (or `response_status`). It is now marked `always()`. (#45)
+
 ## 2.0.2 - 2026-11-19
 
 ### Fixed
@@ -134,6 +140,7 @@ php artisan migrate
 
 
 
+
 ```
 It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
 
@@ -196,6 +203,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -247,6 +255,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
