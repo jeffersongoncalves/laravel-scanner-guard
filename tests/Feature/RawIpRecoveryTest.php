@@ -96,7 +96,12 @@ it('keeps answering 404 and reports when the recovery lookup fails', function ()
     // No DDL: on MySQL it would commit RefreshDatabase's transaction.
     config(['scanner-guard.table' => 'scanner_guard_bans_missing']);
 
-    $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.55'])->get('/hello')->assertNotFound();
+    try {
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.55'])->get('/hello')->assertNotFound();
+    } finally {
+        // MySQL's teardown rolls the migrations back, reading this config.
+        config(['scanner-guard.table' => 'scanner_guard_bans']);
+    }
 });
 
 it('does not overwrite a raw ip cached meanwhile by a newer ban', function () {
