@@ -8,6 +8,8 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Route;
 use JeffersonGoncalves\ScannerGuard\Console\Commands\AggregateAndPruneCommand;
 use JeffersonGoncalves\ScannerGuard\Console\Commands\ExportDenylistCommand;
+use JeffersonGoncalves\ScannerGuard\Console\Commands\PullDenylistCommand;
+use JeffersonGoncalves\ScannerGuard\Http\Controllers\DenylistController;
 use JeffersonGoncalves\ScannerGuard\Http\Controllers\RecordForwardedBanController;
 use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
 use Spatie\LaravelPackageTools\Package;
@@ -28,6 +30,7 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
             ->hasCommands([
                 ExportDenylistCommand::class,
                 AggregateAndPruneCommand::class,
+                PullDenylistCommand::class,
             ]);
     }
 
@@ -45,18 +48,25 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
         Route::aliasMiddleware('scanner-guard', BlockScannerRequests::class);
 
         if (config('scanner-guard.http.server.enabled', false)) {
-            Route::post(config('scanner-guard.http.server.path', 'scanner-guard/bans'), RecordForwardedBanController::class)
-                ->name('scanner-guard.bans.store');
+            $path = config('scanner-guard.http.server.path', 'scanner-guard/bans');
+
+            Route::post($path, RecordForwardedBanController::class)->name('scanner-guard.bans.store');
+            Route::get($path, DenylistController::class)->name('scanner-guard.bans.index');
         }
 
         $this->app->booted(function (): void {
+            $schedule = $this->app->make(Schedule::class);
+
+            // Pulls also refresh the satellite's nginx file when sync_to_nginx is on.
+            if (config('scanner-guard.driver', 'database') === 'http' && config('scanner-guard.http.pull', false)) {
+                $schedule->command(PullDenylistCommand::class)->everyMinute()->withoutOverlapping();
+            }
+
             // Both jobs work on the ban/stats tables, which only the
             // database driver has.
             if (config('scanner-guard.driver', 'database') !== 'database') {
                 return;
             }
-
-            $schedule = $this->app->make(Schedule::class);
 
             if (config('scanner-guard.sync_to_nginx', false)) {
                 // Every minute so expired bans leave nginx promptly; cheap, since the

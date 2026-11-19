@@ -412,6 +412,30 @@ back to `http.secret`, so you can move satellites over one at a time.
 The satellite sends the request after the response (`defer()`), with `http.timeout` (default 2s);
 a failure is logged and never affects the request or the local (cache) ban.
 
+#### Distributing the central denylist to satellites
+
+By default a satellite only knows its own bans. To block an IP on every app once any app (or the
+central one) bans it, turn on pulling on each satellite:
+
+```dotenv
+SCANNER_GUARD_HTTP_PULL=true
+```
+
+`scanner-guard:pull-denylist` then runs every minute: a signed `GET` on `SCANNER_GUARD_HTTP_URL`
+(headers `X-Source`, `X-Timestamp`, `X-Signature: hash_hmac('sha256', timestamp.source, secret)`,
+same secrets as the forwarding) returns the central app's active bans, `ip_blocklist` and
+user-agent patterns, including its runtime (database) blocklist. The satellite:
+
+- caches each ban until its expiry, so the middleware blocks it;
+- merges the static lists into its own `ip_blocklist` / user-agent patterns;
+- lifts bans the central app no longer lists (e.g. unbanned there);
+- with `sync_to_nginx`, rewrites its own nginx denylist after each pull (the satellite has no
+  database, so this replaces the scheduled export).
+
+A failed pull is logged, exits non-zero and keeps the last list. The response carries raw IPs and
+isn't signed itself, so use an `https` URL. Only bans whose raw IP is still in the central cache
+are served (see [Privacy tradeoff](#privacy-tradeoff)).
+
 ## Configuration
 
 ```php

@@ -73,6 +73,119 @@ class ScannerGuard
     }
 
     /**
+     * This satellite's name in forwarded bans and denylist pulls.
+     */
+    public function source(): string
+    {
+        return (string) (config('scanner-guard.http.source') ?? config('app.name'));
+    }
+
+    /**
+     * Central side of the pull: active bans whose raw IP is still cached (one
+     * per IP, latest expiry) plus the static lists.
+     *
+     * @return array{bans: list<array{ip: string, reason: string, expires_at: string}>, ip_blocklist: list<string>, user_agent_patterns: list<string>}
+     */
+    public function denylist(): array
+    {
+        $bans = [];
+
+        foreach (ScannerGuardBan::query()->active()->orderByDesc('expires_at')->orderBy('id')->get() as $ban) {
+            $ip = $this->rawIpFor($ban->ip_hash);
+
+            if ($ip !== null) {
+                $bans[$ip] ??= ['ip' => $ip, 'reason' => $ban->reason, 'expires_at' => $ban->expires_at->toIso8601String()];
+            }
+        }
+
+        return [
+            'bans' => array_values($bans),
+            'ip_blocklist' => $this->ipBlocklist(),
+            'user_agent_patterns' => $this->userAgentPatterns(),
+        ];
+    }
+
+    /**
+     * Satellite side: fetches the central denylist and applies it. Throws on
+     * a failed request, leaving the last pulled list in place.
+     */
+    public function pullDenylist(): void
+    {
+        $source = $this->source();
+        $timestamp = (string) now()->timestamp;
+
+        $data = Http::timeout((int) config('scanner-guard.http.timeout', 2))
+            ->acceptJson()
+            ->withHeaders(['X-Source' => $source, 'X-Timestamp' => $timestamp, 'X-Signature' => $this->sign($timestamp, $source)])
+            ->get((string) config('scanner-guard.http.url'))
+            ->throw()
+            ->json();
+
+        $this->applyDenylist(is_array($data) ? $data : []);
+    }
+
+    /**
+     * Caches each pulled ban until its expiry, so isBanned() blocks it, and
+     * lifts the ones the central app no longer lists (unbanned there). Bans
+     * made here and not pulled yet are left alone.
+     *
+     * @param  array<mixed>  $data
+     */
+    public function applyDenylist(array $data): void
+    {
+        $previous = (array) $this->cache()->get($this->pulledBansKey(), []);
+        $pulled = [];
+
+        foreach ((array) ($data['bans'] ?? []) as $ban) {
+            $ip = is_array($ban) ? ($ban['ip'] ?? null) : null;
+
+            if (! is_string($ip) || filter_var($ip, FILTER_VALIDATE_IP) === false) {
+                continue;
+            }
+
+            try {
+                $expiresAt = Carbon::parse((string) ($ban['expires_at'] ?? ''));
+            } catch (Throwable) {
+                continue;
+            }
+
+            if ($expiresAt->isPast()) {
+                continue;
+            }
+
+            $this->cacheBan($ip, $expiresAt);
+            $pulled[$this->hashIp($ip)] = ['reason' => (string) ($ban['reason'] ?? ''), 'expires_at' => $expiresAt->toIso8601String()];
+        }
+
+        foreach (array_keys(array_diff_key($previous, $pulled)) as $hash) {
+            $this->cache()->forget($this->banKey((string) $hash));
+            $this->cache()->forget($this->rawIpKey((string) $hash));
+        }
+
+        $strings = fn (mixed $list): array => array_values(array_filter((array) $list, 'is_string'));
+
+        // Forever: an unreachable central app must not lift the last known list.
+        $this->cache()->forever($this->pulledBansKey(), $pulled);
+        $this->cache()->forever($this->pulledBlocklistKey(), [
+            ScannerGuardBlocklistEntry::TYPE_IP => $strings($data['ip_blocklist'] ?? []),
+            ScannerGuardBlocklistEntry::TYPE_USER_AGENT => $strings($data['user_agent_patterns'] ?? []),
+        ]);
+    }
+
+    /**
+     * Active pulled bans, for the satellite's nginx export.
+     *
+     * @return array<string, array{reason: string, expires_at: string}> keyed by ip_hash
+     */
+    public function pulledBans(): array
+    {
+        return array_filter(
+            (array) $this->cache()->get($this->pulledBansKey(), []),
+            fn (array $ban): bool => Carbon::parse($ban['expires_at'])->isFuture(),
+        );
+    }
+
+    /**
      * Cheap fast path: cache lookup first. With the database driver, falls
      * back to a DB check so a cache flush doesn't silently lift a
      * still-active ban — and re-hydrates the cache entry when it does, so
@@ -197,7 +310,21 @@ class ScannerGuard
      */
     protected function mergeBlocklist(array $configured, string $type): array
     {
-        return array_values(array_unique(array_map('strval', [...$configured, ...($this->databaseBlocklist()[$type] ?? [])])));
+        return array_values(array_unique(array_map('strval', [
+            ...$configured,
+            ...($this->databaseBlocklist()[$type] ?? []),
+            ...($this->pulledBlocklist()[$type] ?? []),
+        ])));
+    }
+
+    /**
+     * The central app's static lists, from the last pull (http driver only).
+     *
+     * @return array<string, list<string>>
+     */
+    protected function pulledBlocklist(): array
+    {
+        return $this->driver() === 'http' ? (array) $this->cache()->get($this->pulledBlocklistKey(), []) : [];
     }
 
     /**
@@ -333,7 +460,7 @@ class ScannerGuard
                 'banned_at' => $bannedAt->toIso8601String(),
                 'expires_at' => $expiresAt->toIso8601String(),
                 'offense' => $offense,
-                'source' => (string) (config('scanner-guard.http.source') ?? config('app.name')),
+                'source' => $this->source(),
             ]),
             'cache' => fn () => null,
             default => throw new InvalidArgumentException("Unsupported scanner-guard driver [{$this->driver()}]."),
@@ -707,5 +834,15 @@ class ScannerGuard
     protected function blocklistVersionKey(): string
     {
         return 'scanner-guard:blocklist-version';
+    }
+
+    protected function pulledBansKey(): string
+    {
+        return 'scanner-guard:pulled-bans';
+    }
+
+    protected function pulledBlocklistKey(): string
+    {
+        return 'scanner-guard:pulled-blocklist';
     }
 }
