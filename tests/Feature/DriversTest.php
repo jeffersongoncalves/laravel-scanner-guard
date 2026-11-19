@@ -7,6 +7,7 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Route;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
 use JeffersonGoncalves\ScannerGuard\ScannerGuardServiceProvider;
@@ -108,6 +109,19 @@ it('forwards http-driver bans with a valid hmac signature after the response', f
             && $request['hit_count'] === 3
             && $request->header('X-Signature')[0] === $this->scannerGuard->sign($timestamp, $request->body());
     });
+});
+
+it('forwards a ban made during a request, although that response is a 404', function () {
+    config(['scanner-guard.driver' => 'http']);
+    Http::fake();
+    Route::get('/wp-admin', fn () => 'ok')->middleware('scanner-guard');
+
+    foreach (range(1, 3) as $ignored) {
+        $response = $this->withServerVariables(['REMOTE_ADDR' => '10.20.0.9'])->get('/wp-admin');
+    }
+
+    $response->assertNotFound();
+    Http::assertSent(fn (Request $request): bool => $request['ip'] === '10.20.0.9');
 });
 
 it('never lets a failing remote call break the ban', function () {
