@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.0.1 - 2026-11-19
+
+### Fixed
+
+- A banned IP whose raw IP was lost from the cache (a `cache:clear`, an eviction) is now cached again when it comes back, and the denylist sinks are re-synced, so the ban reaches nginx, Cloudflare or Traefik again instead of staying app-only until it expires. `database` driver only, at most one lookup a minute per IP (#43).
+
 ## 2.0.0 - 2026-11-19
 
 ### Denylist sinks
@@ -119,6 +125,7 @@ php artisan migrate
 
 
 
+
 ```
 It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
 
@@ -179,6 +186,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -230,6 +238,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
