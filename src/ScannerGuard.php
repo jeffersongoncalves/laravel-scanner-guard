@@ -846,6 +846,8 @@ class ScannerGuard
      * slows down or fails the request; failures are only logged. The raw IP
      * is sent (the central app needs it for its denylist sinks) but its own
      * salt hashes it — a satellite's ip_hash wouldn't match there.
+     * always(): the banning request itself answers 404, and Laravel skips
+     * deferred callbacks on a >= 400 response.
      *
      * @param  array<string, mixed>  $payload
      */
@@ -865,7 +867,7 @@ class ScannerGuard
             } catch (Throwable $e) {
                 Log::error('scanner-guard: failed to forward ban', ['exception' => $e->getMessage()]);
             }
-        });
+        })->always();
 
         return null;
     }
