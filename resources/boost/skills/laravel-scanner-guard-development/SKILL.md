@@ -1,6 +1,6 @@
 ---
 name: laravel-scanner-guard-development
-description: Extend or debug JeffersonGoncalves\ScannerGuard — scanner path patterns, ban lifecycle, ASN blocklisting, and the denylist sinks (nginx, Cloudflare, Traefik).
+description: Extend or debug JeffersonGoncalves\ScannerGuard — scanner path patterns, ban lifecycle, IP/UA/ASN blocklisting, the http central/satellite protocol and agent heartbeats, and the denylist sinks (nginx, Cloudflare, Traefik).
 ---
 
 # Laravel Scanner Guard Development
@@ -13,6 +13,7 @@ Use this skill when:
 - Debugging why an IP was (or wasn't) banned
 - Working with the denylist sinks and their cache-eviction tradeoff
 - Extending `ScannerGuard`'s ban/hit-counting logic
+- Wiring `http` satellites or `scanner-guard-agent` servers to a central app
 
 ## Core Concepts
 
@@ -29,12 +30,17 @@ PHP.
 ### Ban lifecycle
 
 ```
-request -> isBanned()? -----------------------------> yes: abort(response_status)
-        -> asn_blocklist non-empty? -> isAsnBlocked()? -> yes: ban() + abort(response_status)
-        -> matchScannerPath()? ----------------------> no: pass through
-        -> registerHit() >= ban_threshold? -----------> yes: ban() + abort(response_status)
-        -> pass through
+request -> isIpBlocked()? --------------------------> yes: response_status (no ban)
+        -> isBanned()? -----------------------------> yes: recoverRawIp() + response_status
+        -> matchUserAgent()? -----------------------> yes: ban() if action=ban + response_status
+        -> asn_blocklist non-empty? -> isAsnBlocked()? -> yes: ban() + response_status
+        -> matchScannerPath()? ----------------------> no: pass through (404-flood counting)
+        -> registerHit() >= ban_threshold? -----------> yes: ban() + response_status
+        -> pass through (404-flood counting)
 ```
+
+404-flood counting (`not_found_threshold`) only looks at the app's own 404 responses, so
+scanner-guard's early returns never extend a ban; the ban applies from the next request.
 
 `isBanned()` checks cache first (fast path), then falls back to the `scanner_guard_bans` table if
 the cache entry is missing — and re-hydrates the cache when it finds an active DB row. This means
@@ -50,7 +56,10 @@ overwrites that entry, so a fresh ban takes effect immediately.
 separately at ban time (`scanner-guard:raw-ip:{hash}`, TTL = `ban_duration`) purely so
 `scanner-guard:sync-denylist` can hand the denylist sinks a real IP. If that cache entry is gone
 (flush, eviction, "array" driver), the sinks miss that ban — the app-layer protection is
-unaffected (it only needs the hash), only the pre-PHP block lags.
+unaffected (it only needs the hash), only the pre-PHP block lags. When that IP comes back while
+still banned, `recoverRawIp()` caches it again until the ban expires and queues a sink sync
+(`database` driver only, at most one lookup a minute per IP via `scanner-guard:raw-ip-check:{hash}`,
+DB errors reported, never thrown).
 
 ```php
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
@@ -87,7 +96,39 @@ app()->bind(GeoIpDriver::class, fn () => new class implements GeoIpDriver {
 });
 ```
 
+### Central app + satellites / agents (`http` driver)
+
+Satellites POST each ban as JSON with `X-Timestamp` and
+`X-Signature: hash_hmac('sha256', timestamp.body, secret)`; the central app answers `403` (bad
+signature, stale timestamp, unknown source) or `409` (replayed signature). The forward runs in
+`defer(...)->always()`, since the banning request itself answers 404 and Laravel skips plain
+deferred callbacks on a >= 400 response.
+
+`scanner-guard-agent` heartbeats hit `POST {http.server.path}/heartbeat` (route
+`scanner-guard.agents.heartbeat`), signed the same way, validated body
+(`source`, `version`, `rules`, `active_bans`, `started_at`) upserted into `scanner_guard_agents`:
+
+```php
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgent;
+
+ScannerGuardAgent::query()->offline()->get();     // no heartbeat for STALE_AFTER (300s)
+ScannerGuardAgent::query()->online(120)->count(); // custom threshold, in seconds
+```
+
+`source` is case-sensitive (like the `http.secrets` keys; `utf8mb4_bin` on MySQL/MariaDB).
+
 ## Troubleshooting
+
+### A banned IP is still reaching the app after I deleted its row
+
+The cached ban still answers "banned". Use `ScannerGuard::unban($ipHash)` — it deletes the active
+rows, forgets the cached ban and raw IP, and queues a sink sync.
+
+### Forwarded bans never reach the central app
+
+Check the satellite log for the failed POST (logged, never thrown), the secret for that `source` in
+the central `http.secrets`, clock skew vs `http.tolerance`, and that the central app set
+`http.server.enabled`.
 
 ### A legitimate user got banned
 
@@ -133,6 +174,26 @@ one offense. `unban()` clears this guard.
 Central-app side of the `http` driver (behind the `http.server.enabled` route): records the ban
 like a local one, hashing the IP with this app's salt. Same 60-second per-IP guard as `ban()`, so
 several satellites forwarding one burst store a single row (`null` for the duplicates).
+
+### `ScannerGuard::unban(string $ipHash): int`
+
+Deletes active ban rows (`database`), forgets cached ban + raw IP, queues a sink sync. Returns rows
+deleted.
+
+### `ScannerGuard::recoverRawIp(string $ip): void`
+
+Called by the middleware on a banned request: re-caches a lost raw IP until the ban expires and
+re-syncs the sinks. `database` driver only, throttled to one lookup a minute per IP.
+
+### `ScannerGuard::blocklistChanged(): void`
+
+Bumps the runtime blocklist cache version (and queues a sink sync). Model saves/deletes do this
+automatically; call it after mass queries.
+
+### `ScannerGuard::dailyStats(int $days): Collection`
+
+One entry per day (zero-filled, today live): `date`, `bans_count`, `hits_total`, `reason_stats`,
+`top_matched_values`.
 
 ### `ScannerGuard::rawIpFor(string $ipHash): ?string`
 
