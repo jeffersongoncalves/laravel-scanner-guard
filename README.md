@@ -443,6 +443,29 @@ A failed pull is logged, exits non-zero and keeps the last list. The response ca
 isn't signed itself, so use an `https` URL. Only bans whose raw IP is still in the central cache
 are served (see [Privacy tradeoff](#privacy-tradeoff)).
 
+#### Server agents (SSH and other logs)
+
+[`scanner-guard-agent`](https://github.com/jeffersongoncalves/scanner-guard-agent) is a static Go
+binary for Linux servers. It watches sshd, nginx, postfix or any log with an IP, bans offenders in
+nftables, and talks to the central app like a satellite: it forwards each ban (`reason` = its rule
+name, e.g. `ssh_bruteforce`, `source` = the server name) and pulls the denylist. Give each server
+its own secret in `http.secrets`.
+
+It also sends a signed heartbeat every pull to `POST {http.server.path}/heartbeat`. The central
+app keeps one row per source in `scanner_guard_agents` (run the `create_scanner_guard_agents_table`
+migration), with `version`, `rules`, `active_bans`, `started_at` and `last_seen_at`:
+
+```php
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgent;
+
+ScannerGuardAgent::query()->offline()->get();     // no heartbeat for 5 minutes
+ScannerGuardAgent::query()->online(120)->count(); // custom threshold, in seconds
+$agent->isOnline();
+```
+
+The heartbeat is checked like a forwarded ban (signature, timestamp tolerance, replay), and its body
+is validated before it is stored.
+
 ## Configuration
 
 ```php
