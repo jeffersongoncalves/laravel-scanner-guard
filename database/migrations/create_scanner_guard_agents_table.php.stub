@@ -1,0 +1,34 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('scanner_guard_agents', function (Blueprint $table) {
+            $table->id();
+            $source = $table->string('source', 100)->unique();
+
+            // Case-sensitive, like the http.secrets keys: under MySQL's default
+            // collation "SHOP" (shared secret) would match and overwrite "shop"'s row.
+            if (in_array(Schema::getConnection()->getDriverName(), ['mysql', 'mariadb'], true)) {
+                $source->charset('utf8mb4')->collation('utf8mb4_bin');
+            }
+
+            $table->string('version', 50)->nullable();
+            $table->json('rules')->nullable();
+            $table->unsignedInteger('active_bans')->default(0);
+            $table->timestamp('started_at')->nullable();
+            $table->timestamp('last_seen_at')->index();
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('scanner_guard_agents');
+    }
+};
