@@ -68,6 +68,17 @@ it('rejects bad signatures, stale timestamps, replays and other sources secrets'
     expect(ScannerGuardAgent::query()->sole()->active_bans)->toBe(9);
 });
 
+it('never lets another casing of a source overwrite its row', function () {
+    config(['scanner-guard.http.secrets' => ['shop' => 'shop-secret']]);
+
+    postHeartbeat(heartbeat(['source' => 'shop', 'active_bans' => 1]), 'shop-secret')->assertNoContent();
+    // "SHOP" is not listed, so the shared secret is accepted for it.
+    postHeartbeat(heartbeat(['source' => 'SHOP', 'active_bans' => 99]))->assertNoContent();
+
+    expect(ScannerGuardAgent::query()->count())->toBe(2)
+        ->and(ScannerGuardAgent::query()->where('source', 'shop')->sole()->active_bans)->toBe(1);
+});
+
 it('validates the payload', function () {
     postHeartbeat(heartbeat(['source' => null]))->assertUnprocessable(); // signed with the shared secret, still needs a source
     postHeartbeat(heartbeat(['rules' => [str_repeat('x', 31)]]))->assertUnprocessable();

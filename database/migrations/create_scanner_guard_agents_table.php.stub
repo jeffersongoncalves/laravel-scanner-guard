@@ -10,7 +10,14 @@ return new class extends Migration
     {
         Schema::create('scanner_guard_agents', function (Blueprint $table) {
             $table->id();
-            $table->string('source', 100)->unique();
+            $source = $table->string('source', 100)->unique();
+
+            // Case-sensitive, like the http.secrets keys: under MySQL's default
+            // collation "SHOP" (shared secret) would match and overwrite "shop"'s row.
+            if (in_array(Schema::getConnection()->getDriverName(), ['mysql', 'mariadb'], true)) {
+                $source->charset('utf8mb4')->collation('utf8mb4_bin');
+            }
+
             $table->string('version', 50)->nullable();
             $table->json('rules')->nullable();
             $table->unsignedInteger('active_bans')->default(0);
