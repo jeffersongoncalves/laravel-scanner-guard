@@ -1,6 +1,6 @@
 ---
 name: laravel-scanner-guard-development
-description: Extend or debug JeffersonGoncalves\ScannerGuard — scanner path patterns, ban lifecycle, IP/UA/ASN blocklisting, the http central/satellite protocol and agent heartbeats, and the denylist sinks (nginx, Cloudflare, Traefik).
+description: Extend or debug JeffersonGoncalves\ScannerGuard — scanner path patterns, ban lifecycle, IP/UA/ASN blocklisting, the http central/satellite protocol and agent heartbeats, and the denylist sinks (nginx, Apache, Caddy, FrankenPHP, Cloudflare, Traefik).
 ---
 
 # Laravel Scanner Guard Development

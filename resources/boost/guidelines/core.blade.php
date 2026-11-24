@@ -69,7 +69,7 @@ use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
   sends signed heartbeats to `POST {http.server.path}/heartbeat`, stored one row per source in
   `Models\ScannerGuardAgent` (`online()` / `offline()` scopes, `isOnline()`, stale after 300s).
 - **Denylist sinks**: `scanner-guard.sinks` lists `Contracts\DenylistSink` classes (separate
-  packages: `laravel-scanner-guard-nginx`, `laravel-scanner-guard-cloudflare`; Traefik pulls via
+  packages: `laravel-scanner-guard-nginx`, `-apache`, `-caddy`, `-frankenphp`, `-cloudflare`; Traefik pulls via
   `laravel-scanner-guard-traefik`). `php artisan scanner-guard:sync-denylist` pushes the static
   `ip_blocklist` + active bans to each, best-effort (it needs a cached raw IP, not the permanent
   hashed record). With sinks set it runs every minute and each ban queues a sync (`sync_on_ban`).
