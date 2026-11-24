@@ -247,6 +247,9 @@ pushes the current denylist to something that blocks earlier. Sinks ship as sepa
 | Package | Blocks at | How |
 |---|---|---|
 | [`laravel-scanner-guard-nginx`](https://github.com/jeffersongoncalves/laravel-scanner-guard-nginx) | nginx | writes an `include`d `deny <ip>;` file, then reloads nginx |
+| [`laravel-scanner-guard-apache`](https://github.com/jeffersongoncalves/laravel-scanner-guard-apache) | Apache | writes an included `Require not ip` file, then reloads Apache |
+| [`laravel-scanner-guard-caddy`](https://github.com/jeffersongoncalves/laravel-scanner-guard-caddy) | Caddy | writes an `import`ed `abort` snippet, then reloads Caddy |
+| [`laravel-scanner-guard-frankenphp`](https://github.com/jeffersongoncalves/laravel-scanner-guard-frankenphp) | FrankenPHP, Octane | same snippet as Caddy, never reloading from its own requests |
 | [`laravel-scanner-guard-cloudflare`](https://github.com/jeffersongoncalves/laravel-scanner-guard-cloudflare) | Cloudflare edge | replaces a Custom IP List used by a WAF rule |
 | [`laravel-scanner-guard-traefik`](https://github.com/jeffersongoncalves/laravel-scanner-guard-traefik) | Traefik | serves the list to Traefik's HTTP provider (pulled, not a sink) |
 

@@ -344,6 +344,9 @@ return [
     | Official sinks ship as separate packages:
     |
     |   - jeffersongoncalves/laravel-scanner-guard-nginx       (deny file)
+    |   - jeffersongoncalves/laravel-scanner-guard-apache      (Require file)
+    |   - jeffersongoncalves/laravel-scanner-guard-caddy       (abort snippet)
+    |   - jeffersongoncalves/laravel-scanner-guard-frankenphp  (abort snippet)
     |   - jeffersongoncalves/laravel-scanner-guard-cloudflare  (Custom IP List)
     |
     | Traefik pulls instead of being pushed to:
@@ -358,6 +361,9 @@ return [
     */
     'sinks' => [
         // \JeffersonGoncalves\ScannerGuardNginx\NginxSink::class,
+        // \JeffersonGoncalves\ScannerGuardApache\ApacheSink::class,
+        // \JeffersonGoncalves\ScannerGuardCaddy\CaddySink::class,
+        // \JeffersonGoncalves\ScannerGuardFrankenPhp\FrankenPhpSink::class,
         // \JeffersonGoncalves\ScannerGuardCloudflare\CloudflareSink::class,
     ],
 
