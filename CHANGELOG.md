@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.2.1 - 2026-11-24
+
+### Security
+
+- Ban reasons handed to denylist sinks are limited to `[A-Za-z0-9_.-]`; anything else becomes `_`. A forwarded or pulled reason is free text that sinks write into config comments (e.g. the nginx deny file), where a newline let the holder of a valid forwarding secret, or the central app, add its own directives. Built-in reasons are unchanged, and stored bans are covered too. (#51)
+
+### Docs
+
+- The README, config comments and Boost docs list the new sinks: [Apache](https://github.com/jeffersongoncalves/laravel-scanner-guard-apache), [Caddy](https://github.com/jeffersongoncalves/laravel-scanner-guard-caddy) and [FrankenPHP](https://github.com/jeffersongoncalves/laravel-scanner-guard-frankenphp). (#52)
+
+No config change or migration needed.
+
+**Full Changelog**: https://github.com/jeffersongoncalves/laravel-scanner-guard/compare/2.2.0...2.2.1
+
 ## 2.2.0 - 2026-11-24
 
 ### What's new
@@ -34,8 +48,8 @@ Only needed to use `store_details`. Publish and run the new migration on the cen
 ```bash
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
-```
 
+```
 A config published earlier still defaults `purge_expired_after_days` to `0`: update that line, or set `SCANNER_GUARD_PURGE_EXPIRED_AFTER_DAYS`, to keep the history. After rotating `APP_KEY`, keep the old key in `APP_PREVIOUS_KEYS` to read stored IPs.
 
 Satellites need no config change or migration.
@@ -61,8 +75,8 @@ Publish and run the new migration on the central app:
 ```bash
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
-```
 
+```
 Satellites need no change.
 
 **Full Changelog**: https://github.com/jeffersongoncalves/laravel-scanner-guard/compare/2.0.3...2.1.0
@@ -206,6 +220,7 @@ php artisan migrate
 
 
 
+
 ```
 It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
 
@@ -269,6 +284,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -320,6 +336,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
