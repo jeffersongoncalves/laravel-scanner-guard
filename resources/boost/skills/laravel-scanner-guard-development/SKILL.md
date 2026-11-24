@@ -207,3 +207,4 @@ Best-effort raw IP lookup behind `denylistEntries()`.
 
 What every `DenylistSink` receives: valid `ip_blocklist` entries (reason `static`, `expires_at`
 `null`) first, then one entry per banned IP whose raw IP is still cached, latest expiry first.
+Reasons are limited to `[A-Za-z0-9_.-]` (anything else becomes `_`), safe for a config comment.

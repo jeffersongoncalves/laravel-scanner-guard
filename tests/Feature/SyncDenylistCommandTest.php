@@ -96,6 +96,15 @@ it('passes only the static entry for an ip that is also banned', function () {
     expect(RecordingSink::last())->toBe([['ip' => '10.20.20.31', 'reason' => 'static', 'expires_at' => null]]);
 });
 
+it('passes a free-text reason without characters that could break out of a config comment', function () {
+    withRecordingSink();
+    app(ScannerGuard::class)->recordForwardedBan('10.20.20.32', "x\nallow all; #", 'wp-admin*', 3, now(), now()->addDay());
+
+    $this->artisan('scanner-guard:sync-denylist')->assertSuccessful();
+
+    expect(RecordingSink::last()[0]['reason'])->toBe('x_allow_all___');
+});
+
 it('logs a failing sink, keeps running the others and exits with failure', function () {
     Log::spy();
     $failing = new class implements DenylistSink
