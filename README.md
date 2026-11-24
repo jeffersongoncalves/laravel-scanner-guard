@@ -255,6 +255,10 @@ pushes the current denylist to something that blocks earlier. Sinks ship as sepa
 | [`laravel-scanner-guard-aws-waf`](https://github.com/jeffersongoncalves/laravel-scanner-guard-aws-waf) | CloudFront, ALB, API Gateway | replaces the AWS WAF IP sets used by a web ACL rule |
 | [`laravel-scanner-guard-traefik`](https://github.com/jeffersongoncalves/laravel-scanner-guard-traefik) | Traefik | serves the list to Traefik's HTTP provider (pulled, not a sink) |
 
+The nginx, Apache, Caddy, FrankenPHP and HAProxy sinks don't reload the server by default: a new list
+only takes effect once you set the package's `reload_command`, or reload the server some other way
+(e.g. Caddy's `--watch`).
+
 Install one, then list its class:
 
 ```php
