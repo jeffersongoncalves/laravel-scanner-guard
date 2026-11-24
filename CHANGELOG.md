@@ -2,6 +2,71 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.2.0 - 2026-11-24
+
+### What's new
+
+#### Ban details for incident investigation (opt-in)
+
+`SCANNER_GUARD_STORE_DETAILS=true` also keeps, in each ban row, the IP (`$ban->ip`, encrypted with the app key, hidden from `toArray()` / `toJson()`) and the request path without its query string (`$ban->path`). It covers local bans and bans forwarded to a central app, so an attacker can be traced across servers and after the ban expired. Off by default: the table keeps holding only a salted hash of the IP.
+
+With that env on, `purge_expired_after_days` defaults to `null`, so expired rows are kept until `retention_days`. An explicit `SCANNER_GUARD_PURGE_EXPIRED_AFTER_DAYS` still wins.
+
+#### One row per source
+
+A central app used to merge every ban of one IP forwarded within 60 seconds into a single row. It now merges per IP **and source**: replicas sharing a source still make one row, every other server gets its own.
+
+#### Fixes
+
+- A shorter ban no longer cuts a longer cached one short: bans of one IP are cached and stored under a per-IP lock.
+- The 60-second guard never outlives a forwarded ban.
+- A path with invalid UTF-8 no longer makes a forwarded ban fail to encode.
+- README: the IP hash is pseudonymous, not irreversible (whoever holds the salt can brute-force IPv4).
+
+### Behavior change
+
+With or without `store_details`, a central app now stores, and counts in the daily stats, one ban per source when several servers are hit at once.
+
+### Upgrading
+
+Only needed to use `store_details`. Publish and run the new migration on the central app **before** turning it on:
+
+```bash
+php artisan vendor:publish --tag="scanner-guard-migrations"
+php artisan migrate
+```
+
+A config published earlier still defaults `purge_expired_after_days` to `0`: update that line, or set `SCANNER_GUARD_PURGE_EXPIRED_AFTER_DAYS`, to keep the history. After rotating `APP_KEY`, keep the old key in `APP_PREVIOUS_KEYS` to read stored IPs.
+
+Satellites need no config change or migration.
+
+**Full Changelog**: https://github.com/jeffersongoncalves/laravel-scanner-guard/compare/2.1.0...2.2.0
+
+## 2.1.0 - 2026-11-22
+
+### What's new
+
+#### Agent heartbeats
+
+Central apps now record heartbeats from [scanner-guard-agent](https://github.com/jeffersongoncalves/scanner-guard-agent), a static Go binary that watches sshd, nginx or any log on Linux servers, bans offenders in nftables and forwards its bans here.
+
+- New route `POST {http.server.path}/heartbeat` (only with `http.server.enabled`), checked like a forwarded ban: per-source secret, timestamp tolerance, replay nonce, signed JSON body only.
+- New `ScannerGuardAgent` model, one row per source: `version`, `rules`, `active_bans`, `started_at`, `last_seen_at`, with `online()` / `offline()` scopes and `isOnline()`.
+- The `source` column is case-sensitive on MySQL/MariaDB, so another casing of a source can't overwrite its row.
+
+#### Upgrading
+
+Publish and run the new migration on the central app:
+
+```bash
+php artisan vendor:publish --tag="scanner-guard-migrations"
+php artisan migrate
+```
+
+Satellites need no change.
+
+**Full Changelog**: https://github.com/jeffersongoncalves/laravel-scanner-guard/compare/2.0.3...2.1.0
+
 ## 2.0.3 - 2026-11-19
 
 ### Fixed
