@@ -6,6 +6,7 @@ namespace JeffersonGoncalves\ScannerGuard;
 
 use Carbon\CarbonInterface;
 use Carbon\CarbonPeriod;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -552,7 +553,10 @@ class ScannerGuard
             default => throw new InvalidArgumentException("Unsupported scanner-guard driver [{$this->driver()}]."),
         };
 
-        $this->cacheBan($ip, $expiresAt);
+        if ($this->driver() !== 'database') {
+            $this->cacheBan($ip, $expiresAt); // storeBan() caches under its lock
+        }
+
         $this->cache()->forget($this->hitsKey($this->hashIp($ip)));
         $this->cache()->forget($this->notFoundKey($this->hashIp($ip)));
 
@@ -582,19 +586,12 @@ class ScannerGuard
     {
         $claim = $this->banningKey($this->hashIp($ip), $source);
 
-        if (! $this->claimBan($claim)) {
+        // The satellite chose the expiry, so this app's own durations don't bound it.
+        if (! $this->claimBan($claim, $expiresAt->getTimestamp() - now()->getTimestamp())) {
             return null;
         }
 
-        return $this->releaseClaimOnFailure($claim, function () use ($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense, $source, $path): ScannerGuardBan {
-            // A shorter ban from one source must not cut another's longer one short in the cache.
-            // ponytail: not locked; two sources in the same instant may still cache the shorter
-            // expiry, after which isBanned()/recoverRawIp() restore the longer one from the rows.
-            $latest = ScannerGuardBan::query()->where('ip_hash', $this->hashIp($ip))->active()->latest('expires_at')->first();
-            $this->cacheBan($ip, $latest !== null && $latest->expires_at->gt($expiresAt) ? $latest->expires_at : $expiresAt);
-
-            return $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense, $source, $this->cleanPath($path));
-        });
+        return $this->releaseClaimOnFailure($claim, fn (): ScannerGuardBan => $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense, $source, $this->cleanPath($path)));
     }
 
     /**
@@ -602,10 +599,10 @@ class ScannerGuard
      * ban is cached, and each would store its own row with a climbing
      * offense. add() is atomic: only the first caller wins.
      */
-    protected function claimBan(string $claim): bool
+    protected function claimBan(string $claim, int $banSeconds = 60): bool
     {
         // 60s outlives a burst; capped by the shortest ban so the guard never outlives a ban.
-        $ttl = min(60, (int) config('scanner-guard.ban_duration', 86400), ...array_map('intval', (array) config('scanner-guard.escalation', [])));
+        $ttl = min(60, $banSeconds, (int) config('scanner-guard.ban_duration', 86400), ...array_map('intval', (array) config('scanner-guard.escalation', [])));
 
         return $this->cache()->add($claim, true, max($ttl, 1));
     }
@@ -827,7 +824,7 @@ class ScannerGuard
         $details = (bool) config('scanner-guard.store_details', false);
 
         // offense/source/ip/path only when set, so apps that never ran the matching add_* migrations keep working.
-        $ban = ScannerGuardBan::query()->create(array_filter([
+        $attributes = array_filter([
             'ip_hash' => $this->hashIp($ip),
             'reason' => $reason,
             'matched_value' => $matchedValue,
@@ -838,7 +835,16 @@ class ScannerGuard
             'source' => $source,
             'ip' => $details ? $ip : null,
             'path' => $details ? $path : null,
-        ], fn ($value) => $value !== null));
+        ], fn ($value) => $value !== null);
+
+        $ban = $this->withBanLock($attributes['ip_hash'], function () use ($attributes, $ip, $expiresAt): ScannerGuardBan {
+            // A shorter ban from one source must not cut another's longer one short in the cache.
+            // rescue(): a failed lookup must not keep this ban out of the cache.
+            $latest = rescue(fn (): ?ScannerGuardBan => ScannerGuardBan::query()->where('ip_hash', $attributes['ip_hash'])->active()->latest('expires_at')->first());
+            $this->cacheBan($ip, $latest !== null && $latest->expires_at->gt($expiresAt) ? $latest->expires_at : $expiresAt);
+
+            return ScannerGuardBan::query()->create($attributes);
+        });
 
         $this->recordDailyStats($ban);
 
@@ -847,6 +853,35 @@ class ScannerGuard
         }
 
         return $ban;
+    }
+
+    /**
+     * Serializes read + cache + insert of one IP's bans, so whichever runs
+     * second sees the first one's row. Short work only (no stats or sync in
+     * here). Fails open: without a lock the ban is still stored.
+     *
+     * @template T
+     *
+     * @param  callable(): T  $work
+     * @return T
+     */
+    protected function withBanLock(string $hash, callable $work): mixed
+    {
+        $store = $this->cache()->getStore();
+        $lock = $store instanceof LockProvider ? $store->lock($this->banLockKey($hash), 10) : null;
+
+        try {
+            $lock?->block(3);
+        } catch (Throwable $e) {
+            report($e);
+            $lock = null;
+        }
+
+        try {
+            return $work();
+        } finally {
+            $lock?->release();
+        }
     }
 
     /**
@@ -940,13 +975,30 @@ class ScannerGuard
         return "scanner-guard:banning:{$hash}".($source === null ? '' : ':'.md5($source));
     }
 
+    protected function banLockKey(string $hash): string
+    {
+        return "scanner-guard:ban-lock:{$hash}";
+    }
+
     /**
      * Attacker-controlled: raw bytes or NULs would fail the insert (or the
      * JSON encoding of a forwarded ban) and so lose the ban record itself.
+     * A satellite may also send a query string, which is never kept.
      */
     protected function cleanPath(?string $path): ?string
     {
-        return $path === null ? null : mb_substr(str_replace("\0", '', mb_scrub($path, 'UTF-8')), 0, 2048, 'UTF-8');
+        if ($path === null) {
+            return null;
+        }
+
+        $path = str_replace("\0", '', Str::before($path, '?'));
+
+        // Percent-encoded, not mb_scrub(): its "?" would read as a query string on the central app.
+        if (! mb_check_encoding($path, 'UTF-8')) {
+            $path = (string) preg_replace_callback('/[\x80-\xFF]/', fn (array $byte): string => rawurlencode($byte[0]), $path);
+        }
+
+        return mb_substr($path, 0, 2048, 'UTF-8');
     }
 
     protected function hitsKey(string $hash): string

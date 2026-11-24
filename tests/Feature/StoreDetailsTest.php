@@ -65,7 +65,9 @@ it('stores the path, whatever bytes the attacker sent', function (string $path, 
     expect(ScannerGuardBan::query()->sole()->path)->toBe($stored);
 })->with([
     'plain' => ['wp-admin/setup-config.php', 'wp-admin/setup-config.php'],
-    'nul and invalid utf-8' => ["wp-admin/\0a\xFFb", 'wp-admin/a?b'],
+    'nul and invalid utf-8' => ["wp-admin/\0a\xFFb", 'wp-admin/a%FFb'],
+    'valid utf-8' => ['wp-admin/é', 'wp-admin/é'],
+    'query string' => ['wp-admin/install.php?token=secret', 'wp-admin/install.php'],
     'too long' => [str_repeat('a', 5000), str_repeat('a', 2048)],
 ]);
 
@@ -79,7 +81,10 @@ it('stores the path of the banning request without its query string', function (
 });
 
 it('keeps expired bans by default once details are turned on through the env', function (array $env, mixed $expected) {
+    $original = [];
+
     foreach ($env as $key => $value) {
+        $original[$key] = [getenv($key), array_key_exists($key, $_ENV), $_ENV[$key] ?? null];
         putenv("{$key}={$value}");
         $_ENV[$key] = $value;
     }
@@ -87,9 +92,14 @@ it('keeps expired bans by default once details are turned on through the env', f
     try {
         expect((require __DIR__.'/../../config/scanner-guard.php')['purge_expired_after_days'])->toBe($expected);
     } finally {
-        foreach (array_keys($env) as $key) {
-            putenv($key);
-            unset($_ENV[$key]);
+        foreach ($original as $key => [$process, $inEnv, $value]) {
+            putenv($process === false ? $key : "{$key}={$process}");
+
+            if ($inEnv) {
+                $_ENV[$key] = $value;
+            } else {
+                unset($_ENV[$key]);
+            }
         }
     }
 })->with([
