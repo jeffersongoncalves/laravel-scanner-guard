@@ -91,6 +91,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Store Details
+    |--------------------------------------------------------------------------
+    |
+    | Opt-in, for incident investigation. Also keeps in each ban row the IP
+    | ($ban->ip, encrypted with the app key) and the request path without
+    | its query string ($ban->path). Off (default): the table only ever
+    | holds a salted hash of the IP. Needs the add_details migration; set it
+    | on the central app with the "http" driver.
+    |
+    | Turning it on through the env also keeps expired rows until
+    | retention_days (see purge_expired_after_days). Rotating APP_KEY needs
+    | the old key in APP_PREVIOUS_KEYS to read stored IPs.
+    |
+    */
+    'store_details' => env('SCANNER_GUARD_STORE_DETAILS', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Scanner Paths
     |--------------------------------------------------------------------------
     |
@@ -379,10 +397,11 @@ return [
     | scanner-guard:aggregate-and-prune deletes bans that expired at least
     | this many days ago (0 = on the next run), once their day is recorded
     | in daily_stats_table. Set to null to keep expired rows until
-    | retention_days instead.
+    | retention_days instead. Defaults to null with
+    | SCANNER_GUARD_STORE_DETAILS on, so the history survives the ban.
     |
     */
-    'purge_expired_after_days' => env('SCANNER_GUARD_PURGE_EXPIRED_AFTER_DAYS', 0),
+    'purge_expired_after_days' => env('SCANNER_GUARD_PURGE_EXPIRED_AFTER_DAYS', env('SCANNER_GUARD_STORE_DETAILS', false) ? null : 0),
 
     /*
     |--------------------------------------------------------------------------

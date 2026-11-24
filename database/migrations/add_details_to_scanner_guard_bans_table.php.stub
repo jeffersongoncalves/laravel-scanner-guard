@@ -1,0 +1,24 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table(config('scanner-guard.table', 'scanner_guard_bans'), function (Blueprint $table) {
+            // Encrypted ciphertext, so text and no index: look bans up by ip_hash.
+            $table->text('ip')->nullable();
+            $table->text('path')->nullable();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::table(config('scanner-guard.table', 'scanner_guard_bans'), function (Blueprint $table) {
+            $table->dropColumn(['ip', 'path']);
+        });
+    }
+};

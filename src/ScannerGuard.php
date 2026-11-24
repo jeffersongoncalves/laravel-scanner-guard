@@ -6,6 +6,7 @@ namespace JeffersonGoncalves\ScannerGuard;
 
 use Carbon\CarbonInterface;
 use Carbon\CarbonPeriod;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -362,14 +363,27 @@ class ScannerGuard
      */
     public function unban(string $ipHash): int
     {
-        $deleted = $this->driver() === 'database'
-            ? ScannerGuardBan::query()->where('ip_hash', $ipHash)->active()->delete()
-            : 0;
+        $claims = [$this->banningKey($ipHash)];
+        $deleted = 0;
+
+        if ($this->driver() === 'database') {
+            $bans = ScannerGuardBan::query()->where('ip_hash', $ipHash)->active();
+
+            // Whole rows: without the add_source migration there is no such column to select.
+            foreach ((clone $bans)->get() as $ban) {
+                $claims[] = $this->banningKey($ipHash, $ban->getAttributes()['source'] ?? null);
+            }
+
+            $deleted = $bans->delete();
+        }
 
         $this->cache()->forget($this->banKey($ipHash));
         $this->cache()->forget($this->rawIpKey($ipHash));
         // So a manual unban doesn't swallow a fresh ban of the same IP right after.
-        $this->cache()->forget($this->banningKey($ipHash));
+        foreach (array_unique($claims) as $claim) {
+            $this->cache()->forget($claim);
+        }
+
         $this->queueSync();
 
         return (int) $deleted;
@@ -505,11 +519,13 @@ class ScannerGuard
      */
     public function ban(string $ip, string $reason, string $matchedValue, int $hitCount, ?string $path = null): ?ScannerGuardBan
     {
-        if (! $this->claimBan($this->hashIp($ip))) {
+        $claim = $this->banningKey($this->hashIp($ip));
+
+        if (! $this->claimBan($claim)) {
             return null;
         }
 
-        return $this->releaseClaimOnFailure($ip, fn (): ?ScannerGuardBan => $this->applyBan($ip, $reason, $matchedValue, $hitCount, $path));
+        return $this->releaseClaimOnFailure($claim, fn (): ?ScannerGuardBan => $this->applyBan($ip, $reason, $matchedValue, $hitCount, $this->cleanPath($path)));
     }
 
     protected function applyBan(string $ip, string $reason, string $matchedValue, int $hitCount, ?string $path): ?ScannerGuardBan
@@ -520,7 +536,7 @@ class ScannerGuard
 
         // Resolved before any cache write, so a bad driver fails without a half-applied ban.
         $persist = match ($this->driver()) {
-            'database' => fn (): ScannerGuardBan => $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense),
+            'database' => fn (): ScannerGuardBan => $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense, path: $path),
             // The satellite decides the escalation; the central app stores its offense as-is.
             'http' => fn () => $this->forwardBan([
                 'ip' => $ip,
@@ -537,7 +553,10 @@ class ScannerGuard
             default => throw new InvalidArgumentException("Unsupported scanner-guard driver [{$this->driver()}]."),
         };
 
-        $this->cacheBan($ip, $expiresAt);
+        if ($this->driver() !== 'database') {
+            $this->cacheBan($ip, $expiresAt); // storeBan() caches under its lock
+        }
+
         $this->cache()->forget($this->hitsKey($this->hashIp($ip)));
         $this->cache()->forget($this->notFoundKey($this->hashIp($ip)));
 
@@ -558,21 +577,21 @@ class ScannerGuard
 
     /**
      * Receiving side of the http driver: records a ban forwarded by a
-     * satellite app exactly like a local one, raw IP kept in cache only.
-     * Null when this IP was already banned moments ago (e.g. several
-     * satellites behind a load balancer forwarding the same burst).
+     * satellite app exactly like a local one (including store_details).
+     * Null when the same source already forwarded this IP moments ago (e.g.
+     * replicas behind a load balancer sharing a source). Every other source
+     * gets its own row, so an incident shows each server it hit.
      */
-    public function recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null): ?ScannerGuardBan
+    public function recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null, ?string $path = null): ?ScannerGuardBan
     {
-        if (! $this->claimBan($this->hashIp($ip))) {
+        $claim = $this->banningKey($this->hashIp($ip), $source);
+
+        // The satellite chose the expiry, so this app's own durations don't bound it.
+        if (! $this->claimBan($claim, $expiresAt->getTimestamp() - now()->getTimestamp())) {
             return null;
         }
 
-        return $this->releaseClaimOnFailure($ip, function () use ($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense, $source): ScannerGuardBan {
-            $this->cacheBan($ip, $expiresAt);
-
-            return $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense, $source);
-        });
+        return $this->releaseClaimOnFailure($claim, fn (): ScannerGuardBan => $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense, $source, $this->cleanPath($path)));
     }
 
     /**
@@ -580,12 +599,12 @@ class ScannerGuard
      * ban is cached, and each would store its own row with a climbing
      * offense. add() is atomic: only the first caller wins.
      */
-    protected function claimBan(string $hash): bool
+    protected function claimBan(string $claim, int $banSeconds = 60): bool
     {
         // 60s outlives a burst; capped by the shortest ban so the guard never outlives a ban.
-        $ttl = min(60, (int) config('scanner-guard.ban_duration', 86400), ...array_map('intval', (array) config('scanner-guard.escalation', [])));
+        $ttl = min(60, $banSeconds, (int) config('scanner-guard.ban_duration', 86400), ...array_map('intval', (array) config('scanner-guard.escalation', [])));
 
-        return $this->cache()->add($this->banningKey($hash), true, max($ttl, 1));
+        return $this->cache()->add($claim, true, max($ttl, 1));
     }
 
     /**
@@ -597,12 +616,12 @@ class ScannerGuard
      * @param  callable(): T  $work
      * @return T
      */
-    protected function releaseClaimOnFailure(string $ip, callable $work): mixed
+    protected function releaseClaimOnFailure(string $claim, callable $work): mixed
     {
         try {
             return $work();
         } catch (Throwable $e) {
-            $this->cache()->forget($this->banningKey($this->hashIp($ip)));
+            $this->cache()->forget($claim);
 
             throw $e;
         }
@@ -796,14 +815,16 @@ class ScannerGuard
         $this->cache()->put($this->banKey($hash), true, $expiresAt);
         // Deliberately where a raw IP is cached (recoverRawIp() re-caches a
         // lost one) — required so scanner-guard:sync-denylist can hand sinks a real IP.
-        // See README for why this can't live in the (hashed) database row.
+        // See README for why the sinks don't read it from the database row.
         $this->cache()->put($this->rawIpKey($hash), $ip, $expiresAt);
     }
 
-    protected function storeBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null): ScannerGuardBan
+    protected function storeBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null, ?string $path = null): ScannerGuardBan
     {
-        // offense/source only when set, so apps that never ran the add_offense/add_source migrations keep working.
-        $ban = ScannerGuardBan::query()->create(array_filter([
+        $details = (bool) config('scanner-guard.store_details', false);
+
+        // offense/source/ip/path only when set, so apps that never ran the matching add_* migrations keep working.
+        $attributes = array_filter([
             'ip_hash' => $this->hashIp($ip),
             'reason' => $reason,
             'matched_value' => $matchedValue,
@@ -812,7 +833,18 @@ class ScannerGuard
             'expires_at' => $expiresAt,
             'offense' => $offense,
             'source' => $source,
-        ], fn ($value) => $value !== null));
+            'ip' => $details ? $ip : null,
+            'path' => $details ? $path : null,
+        ], fn ($value) => $value !== null);
+
+        $ban = $this->withBanLock($attributes['ip_hash'], function () use ($attributes, $ip, $expiresAt): ScannerGuardBan {
+            // A shorter ban from one source must not cut another's longer one short in the cache.
+            // rescue(): a failed lookup must not keep this ban out of the cache.
+            $latest = rescue(fn (): ?ScannerGuardBan => ScannerGuardBan::query()->where('ip_hash', $attributes['ip_hash'])->active()->latest('expires_at')->first());
+            $this->cacheBan($ip, $latest !== null && $latest->expires_at->gt($expiresAt) ? $latest->expires_at : $expiresAt);
+
+            return ScannerGuardBan::query()->create($attributes);
+        });
 
         $this->recordDailyStats($ban);
 
@@ -821,6 +853,35 @@ class ScannerGuard
         }
 
         return $ban;
+    }
+
+    /**
+     * Serializes read + cache + insert of one IP's bans, so whichever runs
+     * second sees the first one's row. Short work only (no stats or sync in
+     * here). Fails open: without a lock the ban is still stored.
+     *
+     * @template T
+     *
+     * @param  callable(): T  $work
+     * @return T
+     */
+    protected function withBanLock(string $hash, callable $work): mixed
+    {
+        $store = $this->cache()->getStore();
+        $lock = $store instanceof LockProvider ? $store->lock($this->banLockKey($hash), 10) : null;
+
+        try {
+            $lock?->block(3);
+        } catch (Throwable $e) {
+            report($e);
+            $lock = null;
+        }
+
+        try {
+            return $work();
+        } finally {
+            $lock?->release();
+        }
     }
 
     /**
@@ -909,9 +970,35 @@ class ScannerGuard
         return "scanner-guard:ban:{$hash}";
     }
 
-    protected function banningKey(string $hash): string
+    protected function banningKey(string $hash, ?string $source = null): string
     {
-        return "scanner-guard:banning:{$hash}";
+        return "scanner-guard:banning:{$hash}".($source === null ? '' : ':'.md5($source));
+    }
+
+    protected function banLockKey(string $hash): string
+    {
+        return "scanner-guard:ban-lock:{$hash}";
+    }
+
+    /**
+     * Attacker-controlled: raw bytes or NULs would fail the insert (or the
+     * JSON encoding of a forwarded ban) and so lose the ban record itself.
+     * A satellite may also send a query string, which is never kept.
+     */
+    protected function cleanPath(?string $path): ?string
+    {
+        if ($path === null) {
+            return null;
+        }
+
+        $path = str_replace("\0", '', Str::before($path, '?'));
+
+        // Percent-encoded, not mb_scrub(): its "?" would read as a query string on the central app.
+        if (! mb_check_encoding($path, 'UTF-8')) {
+            $path = (string) preg_replace_callback('/[\x80-\xFF]/', fn (array $byte): string => rawurlencode($byte[0]), $path);
+        }
+
+        return mb_substr($path, 0, 2048, 'UTF-8');
     }
 
     protected function hitsKey(string $hash): string

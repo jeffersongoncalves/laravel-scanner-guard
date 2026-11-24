@@ -57,8 +57,9 @@ use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
   `GeoIpDriver`, so it only works when that package's `geoip.driver` is `ip_api` or `maxmind`.
 - **Plain 404 response**: `response_status` defaults to 404, not 403 — a banned scanner can't tell
   it's banned versus the route never existing.
-- **Audit trail + stats**: every ban writes a `ScannerGuardBan` row (hashed IP only, never raw) and
-  bumps `scanner_guard_ban_daily_stats`. `ScannerGuard::dailyStats(14)` reads the history;
+- **Audit trail + stats**: every ban writes a `ScannerGuardBan` row (hashed IP; opt-in
+  `store_details` adds the encrypted `$ban->ip` and `$ban->path` for incident investigation, and via
+  its env keeps expired rows until `retention_days`) and bumps `scanner_guard_ban_daily_stats`. `ScannerGuard::dailyStats(14)` reads the history;
   `scanner-guard:aggregate-and-prune` (daily unless `auto_prune = false`) reconciles and prunes.
 - **Unban**: `ScannerGuard::unban($ipHash)` — deleting the row alone leaves the cached ban active.
 - **Drivers**: `driver` = `database` (default), `cache` (cache-only bans) or `http` (satellite
@@ -81,6 +82,7 @@ use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
 return [
     'enabled' => true,
     'driver' => 'database', // database | http | cache
+    'store_details' => false, // needs the add_details migration
     'scanner_paths' => ['wp-admin*', 'wp-login*', 'xmlrpc.php', '*.git/config', /* ... */],
     'ban_threshold' => 3,
     'ban_window' => 300,

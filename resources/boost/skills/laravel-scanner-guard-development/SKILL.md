@@ -49,10 +49,13 @@ cached-but-now-uncached IP. A DB miss is cached as `false` for `negative_cache_t
 (default 60, 0 = off), so non-banned traffic doesn't query the table on every request; `ban()`
 overwrites that entry, so a fresh ban takes effect immediately.
 
-### Privacy: hashed DB, raw IP only in cache
+### Privacy: hashed DB, raw IP in cache (encrypted column opt-in)
 
 `ScannerGuardBan::ip_hash` is `IpAnonymizer::hash($ip)` (salted sha256, from
-`jeffersongoncalves/laravel-visitor-fingerprint`) — irreversible by design. The raw IP is cached
+`jeffersongoncalves/laravel-visitor-fingerprint`). With `store_details` on (default off, needs
+the `add_details` migration), new rows also hold `path` (attacker-controlled, no query string) and
+the IP in `ip` (`encrypted` cast, hidden from serialization, not searchable: query by `ip_hash`);
+the sinks never read it. The raw IP is cached
 separately at ban time (`scanner-guard:raw-ip:{hash}`, TTL = `ban_duration`) purely so
 `scanner-guard:sync-denylist` can hand the denylist sinks a real IP. If that cache entry is gone
 (flush, eviction, "array" driver), the sinks miss that ban — the app-layer protection is
@@ -169,11 +172,12 @@ Idempotent per IP for 60 seconds (atomic cache `add()`): concurrent requests of 
 pass `isBanned()` before the first ban is cached get `null` and store nothing, so a burst counts as
 one offense. `unban()` clears this guard.
 
-### `ScannerGuard::recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null): ?ScannerGuardBan`
+### `ScannerGuard::recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null, ?string $path = null): ?ScannerGuardBan`
 
 Central-app side of the `http` driver (behind the `http.server.enabled` route): records the ban
-like a local one, hashing the IP with this app's salt. Same 60-second per-IP guard as `ban()`, so
-several satellites forwarding one burst store a single row (`null` for the duplicates).
+like a local one, hashing the IP with this app's salt. Same 60-second guard as `ban()`, per IP **and
+source**: replicas sharing a source store a single row (`null` for the duplicates), every other
+source its own.
 
 ### `ScannerGuard::unban(string $ipHash): int`
 
