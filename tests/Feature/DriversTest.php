@@ -227,13 +227,55 @@ it('reads the forwarded ban from the signed body only, never the query string', 
     expect($ban->offense)->toBeNull();
 });
 
-it('stores one row when several satellites forward the same burst', function () {
+it('stores one row when replicas sharing a source forward the same burst', function (array $source) {
     enableServerRoute();
 
-    postBan(signedBan($this->scannerGuard, ['hit_count' => 3]))->assertCreated();
-    postBan(signedBan($this->scannerGuard, ['hit_count' => 4]))->assertCreated();
+    postBan(signedBan($this->scannerGuard, ['hit_count' => 3] + $source))->assertCreated();
+    postBan(signedBan($this->scannerGuard, ['hit_count' => 4] + $source))->assertCreated();
 
     expect(ScannerGuardBan::query()->sole()->hit_count)->toBe(3);
+})->with(['no source' => [[]], 'same source' => [['source' => 'shop']]]);
+
+it('stores one row per source when several servers are hit at once', function () {
+    enableServerRoute();
+
+    postBan(signedBan($this->scannerGuard, ['source' => 'shop']))->assertCreated();
+    postBan(signedBan($this->scannerGuard, ['source' => 'blog']))->assertCreated();
+
+    expect(ScannerGuardBan::query()->orderBy('id')->pluck('source')->all())->toBe(['shop', 'blog']);
+});
+
+it('accepts a fresh ban from every source right after an unban', function () {
+    enableServerRoute();
+
+    postBan(signedBan($this->scannerGuard, ['source' => 'shop']))->assertCreated();
+    postBan(signedBan($this->scannerGuard, ['source' => 'blog']))->assertCreated();
+    expect($this->scannerGuard->unban($this->scannerGuard->hashIp('198.51.100.7')))->toBe(2);
+
+    postBan(signedBan($this->scannerGuard, ['source' => 'shop', 'hit_count' => 5]))->assertCreated();
+    postBan(signedBan($this->scannerGuard, ['source' => 'blog', 'hit_count' => 5]))->assertCreated();
+
+    expect(ScannerGuardBan::query()->count())->toBe(2);
+});
+
+it('keeps the longest ban cached when another source forwards a shorter one', function () {
+    enableServerRoute();
+
+    postBan(signedBan($this->scannerGuard, ['source' => 'shop', 'expires_at' => now()->addDays(30)->toIso8601String()]))->assertCreated();
+    postBan(signedBan($this->scannerGuard, ['source' => 'blog', 'expires_at' => now()->addDay()->toIso8601String()]))->assertCreated();
+
+    $this->travel(2)->days();
+
+    expect($this->scannerGuard->rawIpFor($this->scannerGuard->hashIp('198.51.100.7')))->toBe('198.51.100.7');
+});
+
+it('stores the forwarded path on the central app when details are on', function () {
+    config(['scanner-guard.store_details' => true]);
+    enableServerRoute();
+
+    postBan(signedBan($this->scannerGuard, ['path' => 'wp-admin/setup-config.php']))->assertCreated();
+
+    expect(ScannerGuardBan::query()->sole()->path)->toBe('wp-admin/setup-config.php');
 });
 
 it('rejects forwarded bans with a bad signature, a stale timestamp or a replay', function () {

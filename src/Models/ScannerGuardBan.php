@@ -11,9 +11,9 @@ use Illuminate\Support\Carbon;
 
 /**
  * Permanent audit trail of bans. `ip_hash` is a salted sha256 (see
- * JeffersonGoncalves\VisitorFingerprint\Support\IpAnonymizer::hash()) —
- * never the raw IP, by design (see README for the denylist-sink tradeoff
- * this implies).
+ * JeffersonGoncalves\VisitorFingerprint\Support\IpAnonymizer::hash()). The
+ * IP itself is only stored, encrypted, with `scanner-guard.store_details` on
+ * (see README for the privacy tradeoff this implies).
  *
  * @property int $id
  * @property string $ip_hash
@@ -24,6 +24,8 @@ use Illuminate\Support\Carbon;
  * @property Carbon $expires_at
  * @property int|null $offense escalation step (1 = first offense), null when the ban didn't escalate
  * @property string|null $source satellite app that forwarded the ban (http driver), null when banned locally
+ * @property string|null $ip decrypted IP, null unless scanner-guard.store_details was on at ban time
+ * @property string|null $path path (no query string) that triggered the ban, same condition; attacker-controlled, escape it
  * @property-read bool $is_active
  *
  * @method static \Illuminate\Database\Eloquent\Builder<static> active()
@@ -49,9 +51,15 @@ class ScannerGuardBan extends Model
         'expires_at',
         'offense',
         'source',
+        'ip',
+        'path',
     ];
 
+    /** Read $ban->ip explicitly; toArray()/toJson() must not leak it by accident. */
+    protected $hidden = ['ip'];
+
     protected $casts = [
+        'ip' => 'encrypted',
         'hit_count' => 'integer',
         'offense' => 'integer',
         'banned_at' => 'datetime',

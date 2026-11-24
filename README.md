@@ -301,7 +301,7 @@ retention prune.
    present — filling days the ban-time counter missed, never lowering a counter (`max(existing,
    recomputed)`, since deleted rows can't be recounted);
 2. purges expired bans once their day is recorded, after `scanner-guard.purge_expired_after_days`
-   (default `0` = next run; `null` disables);
+   (default `0` = next run; `null` disables, the default with `SCANNER_GUARD_STORE_DETAILS` on);
 3. deletes ban rows expired more than `scanner-guard.retention_days` (default 90) ago.
 
 Still-active bans are never purged or pruned. With [escalation](#escalating-bans-for-repeat-offenders)
@@ -332,25 +332,70 @@ deployment-specific footgun.
 
 #### Privacy tradeoff
 
-`scanner_guard_bans` only ever stores a salted hash of the IP (`ip_hash`, via
+By default, `scanner_guard_bans` only stores a salted hash of the IP (`ip_hash`, via
 `jeffersongoncalves/laravel-visitor-fingerprint`'s `IpAnonymizer::hash()`) — never the raw address,
-matching this ecosystem's other packages (`laravel-page-visits`, `laravel-short-url`). A hash can't
-be reversed back into an IP, which is exactly the point — but an nginx `deny` line or a Cloudflare
-list item needs a real IP.
+matching this ecosystem's other packages (`laravel-page-visits`, `laravel-short-url`). Without the
+salt (default: `APP_KEY`) a leaked table doesn't reveal the IPs. Anyone holding the salt can still
+brute-force the IPv4 space, so treat the hash as pseudonymized, not anonymous. An nginx `deny` line
+or a Cloudflare list item needs a real IP, though.
 
 The chosen tradeoff: at ban time, the raw IP is cached separately (keyed by the same hash, TTL =
-`ban_duration`) — **cache only, never the permanent table**. `ScannerGuard::denylistEntries()` reads
+`ban_duration`). `ScannerGuard::denylistEntries()` reads
 active bans from the database, then looks up each one's raw IP in that cache entry. If the cache
 entry has expired or been evicted (a `cache:clear`, an "array" driver that doesn't survive between
 requests, LRU eviction under memory pressure, ...), that ban is silently left out of the sinks until
 the IP comes back: a banned request whose raw IP is missing caches it again until the ban expires and
 re-syncs the sinks (`database` driver, at most one lookup a minute per IP).
 
-This means: the **database never contains a reversible IP**, and the **app-layer ban still applies
+This means: the **table alone never reveals an IP**, and the **app-layer ban still applies
 correctly regardless** (the fast-path/DB-fallback ban check in `isBanned()` only ever needs the
 hash). The sinks are best-effort and may miss entries after a cache flush. If you rely on them,
 prefer a durable cache store (`redis`, `file`) over `array` via
 `scanner-guard.store`.
+
+To show the IP of an active ban, read that cache entry: `ScannerGuard::rawIpFor($ban->ip_hash)`
+(`null` once it is gone).
+
+##### Incident investigation (stored details)
+
+To trace an attacker after its bans expired, or across several servers reporting to one central app,
+opt in to also store each banned IP (encrypted with the app key) and the request path (no query
+string) in the ban row. Run the `add_details_to_scanner_guard_bans_table` migration **before**
+enabling it (existing installs: re-publish and `php artisan migrate`):
+
+```dotenv
+SCANNER_GUARD_STORE_DETAILS=true
+```
+
+```php
+$ban->ip;   // "203.0.113.5", null for bans made while it was off
+$ban->path; // "wp-admin/setup-config.php", null when the source sends none (e.g. scanner-guard-agent)
+
+// every server that banned an IP, on the central app:
+ScannerGuardBan::query()
+    ->where('ip_hash', ScannerGuard::hashIp('203.0.113.5'))
+    ->orderBy('banned_at')
+    ->get(['source', 'reason', 'matched_value', 'path', 'hit_count', 'banned_at']);
+```
+
+- With that env on, expired rows are kept until `retention_days` (default 90) instead of being
+  purged on the next run. A config published before this option has `purge_expired_after_days`
+  hardcoded to default to `0`: update that line, or set it to `null`.
+- It applies to new bans only, including the ones forwarded to a central app (set it there).
+- It records bans, not every request: an IP already blocked (by its ban, a pulled ban or a sink)
+  leaves no further row. Use the web server's access log for those.
+- `path` comes from the attacker: escape it when displaying it. It can hold secrets carried in a URL
+  path (e.g. a reset token) if a legitimate visitor trips the 404-flood or User-Agent rule.
+- `ip` is hidden from `toArray()` / `toJson()`, and can't be searched: look bans up with
+  `ScannerGuardBan::where('ip_hash', ScannerGuard::hashIp($ip))`.
+- The sinks still read the cache entry, not this column.
+- After rotating `APP_KEY`, keep the old key in `APP_PREVIOUS_KEYS`, or reading `$ban->ip` throws a
+  `DecryptException`.
+- An IP is personal data under the GDPR/LGPD: keep it only as long as you need it. It lives as long
+  as its row, which with [escalation](#escalating-bans-for-repeat-offenders) on can be up to
+  `max(retention_days, escalation_lookback_days)` after the ban expired.
+- Turning it off doesn't erase what is stored: run
+  `ScannerGuardBan::query()->update(['ip' => null, 'path' => null])`.
 
 ### Running without a database
 
@@ -393,8 +438,10 @@ Each ban is POSTed as JSON (`ip`, `reason`, `matched_value`, `hit_count`, `path`
 `expires_at`, `offense`, `source`) with `X-Timestamp` and `X-Signature: hash_hmac('sha256', timestamp.body, secret)`.
 The central app rejects bad signatures and timestamps outside `http.tolerance` (default 300s) with
 `403`, and a replayed signature with `409`. It then records the ban exactly like a local one: its
-own salted `ip_hash` in the table, daily stats, and the raw IP in cache only — so its denylist
-sinks cover every satellite.
+own salted `ip_hash` in the table, daily stats, and the raw IP in cache (in the row too only with
+[`store_details`](#incident-investigation-stored-details)) — so its denylist sinks cover every
+satellite. Bans of one IP forwarded by the same `source` within 60 seconds (replicas behind a load
+balancer) make a single row; each other `source` gets its own, also counted in the daily stats.
 
 `source` lands in the ban's `source` column, so you can tell which app each ban came from
 (`ScannerGuardBan::where('source', 'shop')`); bans made by the central app itself have `source`
@@ -481,6 +528,7 @@ return [
         'server' => ['enabled' => false, 'path' => 'scanner-guard/bans'],
     ],
     'table' => 'scanner_guard_bans',
+    'store_details' => false, // also keep the IP (encrypted) and path in the ban row
     'scanner_paths' => [
         'wp-admin*', 'wp-login*', 'xmlrpc.php', '*.git/config', '*phpmyadmin*', /* ... */
     ],
@@ -501,7 +549,7 @@ return [
     'sync_on_ban' => true,
     'daily_stats_table' => 'scanner_guard_ban_daily_stats',
     'retention_days' => 90,
-    'purge_expired_after_days' => 0,
+    'purge_expired_after_days' => 0, // null with SCANNER_GUARD_STORE_DETAILS on
     'auto_prune' => true,
 ];
 ```
