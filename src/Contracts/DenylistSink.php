@@ -14,7 +14,7 @@ namespace JeffersonGoncalves\ScannerGuard\Contracts;
 interface DenylistSink
 {
     /**
-     * @param  list<array{ip: string, reason: string, expires_at: string|null}>  $entries  one per IP/CIDR, static ip_blocklist entries first (reason "static", no expiry), all validated
+     * @param  list<array{ip: string, reason: string, expires_at: string|null}>  $entries  one per IP/CIDR, static ip_blocklist entries first (reason "static", no expiry), IPs validated, reasons limited to [A-Za-z0-9_.-]
      */
     public function sync(array $entries): void;
 }

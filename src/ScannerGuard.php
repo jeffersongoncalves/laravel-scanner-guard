@@ -144,7 +144,9 @@ class ScannerGuard
             $ip = $this->rawIpFor($ban['ip_hash']);
 
             if ($ip !== null) {
-                $entries[$ip] ??= ['ip' => $ip, 'reason' => $ban['reason'], 'expires_at' => $ban['expires_at']];
+                // A forwarded or pulled reason is free text; sinks write it into config files,
+                // where a newline would end their comment.
+                $entries[$ip] ??= ['ip' => $ip, 'reason' => (string) preg_replace('/[^\w.-]/', '_', $ban['reason']), 'expires_at' => $ban['expires_at']];
             }
         }
 
