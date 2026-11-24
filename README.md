@@ -250,8 +250,14 @@ pushes the current denylist to something that blocks earlier. Sinks ship as sepa
 | [`laravel-scanner-guard-apache`](https://github.com/jeffersongoncalves/laravel-scanner-guard-apache) | Apache | writes an included `Require not ip` file, then reloads Apache |
 | [`laravel-scanner-guard-caddy`](https://github.com/jeffersongoncalves/laravel-scanner-guard-caddy) | Caddy | writes an `import`ed `abort` snippet, then reloads Caddy |
 | [`laravel-scanner-guard-frankenphp`](https://github.com/jeffersongoncalves/laravel-scanner-guard-frankenphp) | FrankenPHP, Octane | same snippet as Caddy, never reloading from its own requests |
+| [`laravel-scanner-guard-haproxy`](https://github.com/jeffersongoncalves/laravel-scanner-guard-haproxy) | HAProxy | writes an ACL file, then reloads HAProxy |
 | [`laravel-scanner-guard-cloudflare`](https://github.com/jeffersongoncalves/laravel-scanner-guard-cloudflare) | Cloudflare edge | replaces a Custom IP List used by a WAF rule |
+| [`laravel-scanner-guard-aws-waf`](https://github.com/jeffersongoncalves/laravel-scanner-guard-aws-waf) | CloudFront, ALB, API Gateway | replaces the AWS WAF IP sets used by a web ACL rule |
 | [`laravel-scanner-guard-traefik`](https://github.com/jeffersongoncalves/laravel-scanner-guard-traefik) | Traefik | serves the list to Traefik's HTTP provider (pulled, not a sink) |
+
+The nginx, Apache, Caddy, FrankenPHP and HAProxy sinks don't reload the server by default: a new list
+only takes effect once you set the package's `reload_command`, or reload the server some other way
+(e.g. Caddy's `--watch`).
 
 Install one, then list its class:
 

@@ -347,7 +347,9 @@ return [
     |   - jeffersongoncalves/laravel-scanner-guard-apache      (Require file)
     |   - jeffersongoncalves/laravel-scanner-guard-caddy       (abort snippet)
     |   - jeffersongoncalves/laravel-scanner-guard-frankenphp  (abort snippet)
+    |   - jeffersongoncalves/laravel-scanner-guard-haproxy     (ACL file)
     |   - jeffersongoncalves/laravel-scanner-guard-cloudflare  (Custom IP List)
+    |   - jeffersongoncalves/laravel-scanner-guard-aws-waf     (IP sets)
     |
     | Traefik pulls instead of being pushed to:
     | jeffersongoncalves/laravel-scanner-guard-traefik serves the list to its
@@ -364,7 +366,9 @@ return [
         // \JeffersonGoncalves\ScannerGuardApache\ApacheSink::class,
         // \JeffersonGoncalves\ScannerGuardCaddy\CaddySink::class,
         // \JeffersonGoncalves\ScannerGuardFrankenPhp\FrankenPhpSink::class,
+        // \JeffersonGoncalves\ScannerGuardHaproxy\HaproxySink::class,
         // \JeffersonGoncalves\ScannerGuardCloudflare\CloudflareSink::class,
+        // \JeffersonGoncalves\ScannerGuardAwsWaf\AwsWafSink::class,
     ],
 
     'sync_on_ban' => env('SCANNER_GUARD_SYNC_ON_BAN', true),
