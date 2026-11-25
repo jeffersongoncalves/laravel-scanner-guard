@@ -48,10 +48,12 @@ use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
   within `escalation_lookback_days` get longer bans; only `escalation_reasons` count.
 - **IP / CIDR blocklist**: `ip_blocklist` (IPv4 + IPv6, `IpUtils::checkIp()`) — rejected before any
   counting, no ban row, never expires, always sent to the sinks (reason `static`).
+- **IP ignore list**: `ip_ignore` (or `TYPE_IGNORE` rows) — never blocked or banned, skips every check,
+  served to satellites and agents on each pull. Ranges wider than /8 (IPv4) or /16 (IPv6) are dropped.
 - **User-Agent blocklist** (opt-in): `user_agent_blocklist` = `block_empty`, fnmatch `patterns`,
   `action` `ban` (records reason `user_agent`) or `reject` (response only).
 - **Runtime blocklist** (`database` driver): `Models\ScannerGuardBlocklistEntry` rows (`TYPE_IP`,
-  `TYPE_USER_AGENT`) add to the config lists without a redeploy; cached under a version key. After a
+  `TYPE_USER_AGENT`, `TYPE_IGNORE`) add to the config lists without a redeploy; cached under a version key. After a
   mass `query()->delete()`/`update()` call `ScannerGuard::blocklistChanged()`.
 - **ASN blocklist**: `asn_blocklist` (e.g. `['AS16276']`) — resolved through `visitor-fingerprint`'s
   `GeoIpDriver`, so it only works when that package's `geoip.driver` is `ip_api` or `maxmind`.
@@ -92,6 +94,7 @@ return [
     'escalation' => [], // e.g. [86400, 604800, 1209600, 2592000, 7776000]
     'not_found_threshold' => null, // e.g. 20
     'ip_blocklist' => [],
+    'ip_ignore' => [],
     'user_agent_blocklist' => ['block_empty' => false, 'patterns' => [], 'action' => 'ban'],
     'asn_blocklist' => [],
     'store' => null,

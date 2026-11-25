@@ -20,6 +20,8 @@ use Illuminate\Support\Facades\Facade;
  * @method static \JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan|null recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, \Carbon\CarbonInterface $bannedAt, \Carbon\CarbonInterface $expiresAt, ?int $offense = null, string|null $source = null, string|null $path = null)
  * @method static int unban(string $ipHash)
  * @method static list<string> ipBlocklist()
+ * @method static bool isIpIgnored(string $ip)
+ * @method static list<string> ipIgnore()
  * @method static list<string> userAgentPatterns()
  * @method static void blocklistChanged()
  * @method static string|null rawIpFor(string $ipHash)

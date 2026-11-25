@@ -169,6 +169,37 @@ written and they never expire. Every [denylist sink](#blocking-before-php-denyli
 gets them (reason `static`), so with a sink configured they never reach PHP at all. Invalid entries
 are skipped before the sync (with a logged warning), so a typo can't break `nginx -t`.
 
+### IP ignore list
+
+IPs and ranges that must never be blocked or banned, e.g. your own:
+
+```php
+// config/scanner-guard.php
+'ip_ignore' => ['203.0.113.10', '10.0.0.0/8', '2001:db8::/48'],
+```
+
+or, with the `database` driver, at runtime (no migration needed beyond the
+[runtime blocklist](#runtime-blocklist-database)):
+
+```php
+ScannerGuardBlocklistEntry::query()->create(['type' => ScannerGuardBlocklistEntry::TYPE_IGNORE, 'value' => '203.0.113.10']);
+```
+
+- They skip every check of the middleware, the blocklists included.
+- A ban of them is never stored, whether local, through `ScannerGuard::ban()` or forwarded by a
+  satellite or agent.
+- A ban stored before the IP was listed stops blocking it at once, and leaves the denylist and the sinks.
+- [Satellites and agents](#distributing-the-central-denylist-to-satellites) get the list with each pull,
+  so your own IPs reach a new server before its first ban.
+- Invalid entries have no effect, and neither do ranges wider than /8 (IPv4) or /16 (IPv6): a stray
+  `0.0.0.0/0` would turn the package off.
+- An `ip_blocklist` range that contains an ignored IP still reaches the sinks whole: they block before
+  PHP and can't hold the exception.
+
+Only list IPs you control. Behind a proxy, `$request->ip()` must be the real client
+([trusted proxies](https://laravel.com/docs/requests#configuring-trusted-proxies)), or a forged
+`X-Forwarded-For` is enough to be ignored.
+
 ### User-Agent blocklisting
 
 Opt-in, empty by default. Catches scripted clients and blank User-Agents regardless of path:
@@ -193,8 +224,8 @@ stats and reaches the denylist sinks like any other ban; `reject` only answers w
 
 With the `database` driver, IPs / CIDR ranges and UA patterns can also live in the
 `scanner_guard_blocklist` table (run the `create_scanner_guard_blocklist_table` migration), so they
-change without a config edit or a redeploy. They are added on top of `ip_blocklist` and
-`user_agent_blocklist.patterns`, which keep applying:
+change without a config edit or a redeploy. They are added on top of `ip_blocklist`,
+`user_agent_blocklist.patterns` and `ip_ignore`, which keep applying:
 
 ```php
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBlocklistEntry;
@@ -486,11 +517,12 @@ SCANNER_GUARD_HTTP_PULL=true
 
 `scanner-guard:pull-denylist` then runs every minute: a signed `GET` on `SCANNER_GUARD_HTTP_URL`
 (headers `X-Source`, `X-Timestamp`, `X-Signature: hash_hmac('sha256', timestamp.source, secret)`,
-same secrets as the forwarding) returns the central app's active bans, `ip_blocklist` and
-user-agent patterns, including its runtime (database) blocklist. The satellite:
+same secrets as the forwarding) returns the central app's active bans, `ip_blocklist`,
+user-agent patterns and `ip_ignore` (as `ignore`), including its runtime (database) entries. The
+satellite:
 
 - caches each ban until its expiry, so the middleware blocks it;
-- merges the static lists into its own `ip_blocklist` / user-agent patterns;
+- merges the static lists into its own `ip_blocklist` / user-agent patterns / `ip_ignore`;
 - lifts bans the central app no longer lists (e.g. unbanned there);
 - with `sinks` configured, re-syncs its own sinks after each pull (the satellite has no database,
   so this replaces the scheduled sync).
@@ -573,6 +605,7 @@ return [
     'not_found_window' => 60,
     'asn_blocklist' => [],
     'ip_blocklist' => [],
+    'ip_ignore' => [], // never blocked or banned
     'user_agent_blocklist' => ['block_empty' => false, 'patterns' => [], 'action' => 'ban'],
     'store' => null,
     'response_status' => 404,
