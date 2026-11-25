@@ -11,7 +11,8 @@ use JeffersonGoncalves\ScannerGuard\ScannerGuard;
 /**
  * Serves the central denylist to satellites running scanner-guard:pull-denylist.
  * Only registered when scanner-guard.http.server.enabled is true. Signed like
- * the POST, over "X-Timestamp.X-Source"; read-only, so no nonce.
+ * the POST, over "X-Timestamp.X-Source"; read-only, so no nonce. The response
+ * is signed too (ScannerGuard::signResponse()).
  */
 class DenylistController
 {
@@ -29,6 +30,14 @@ class DenylistController
             403
         );
 
-        return response()->json($scannerGuard->denylist());
+        $response = response()->json($scannerGuard->denylist());
+        $timestamp = (string) now()->timestamp;
+
+        return $response->withHeaders([
+            'X-Timestamp' => $timestamp,
+            'X-Signature' => $scannerGuard->signResponse($timestamp, (string) $request->header('X-Signature'), $source, (string) $response->getContent(), $secret),
+            // A proxy rewriting the body would break the signature.
+            'Cache-Control' => 'no-store, no-transform',
+        ]);
     }
 }

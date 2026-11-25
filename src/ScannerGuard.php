@@ -8,6 +8,7 @@ use Carbon\CarbonInterface;
 use Carbon\CarbonPeriod;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -21,6 +22,7 @@ use JeffersonGoncalves\ScannerGuard\Jobs\SyncDenylist;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBlocklistEntry;
 use JeffersonGoncalves\VisitorFingerprint\Support\IpAnonymizer;
+use RuntimeException;
 use Symfony\Component\HttpFoundation\IpUtils;
 use Throwable;
 
@@ -58,6 +60,18 @@ class ScannerGuard
     public function sign(string $timestamp, string $body, ?string $secret = null): string
     {
         return hash_hmac('sha256', $timestamp.$body, $secret ?? (string) config('scanner-guard.http.secret'));
+    }
+
+    /**
+     * HMAC of a denylist response. Bound to the request it answers (its
+     * signature and source), so an older list can't be replayed; the fields
+     * are newline-separated because source is free text and a header value
+     * never holds a newline. The "response" prefix keeps it from ever being
+     * a valid request signature (those start with the timestamp's digits).
+     */
+    public function signResponse(string $timestamp, string $requestSignature, string $source, string $body, ?string $secret = null): string
+    {
+        return hash_hmac('sha256', implode("\n", ['response', $timestamp, $requestSignature, $source, $body]), $secret ?? (string) config('scanner-guard.http.secret'));
     }
 
     /**
@@ -181,21 +195,44 @@ class ScannerGuard
 
     /**
      * Satellite side: fetches the central denylist and applies it. Throws on
-     * a failed request, leaving the last pulled list in place.
+     * a failed request or a bad signature, leaving the last pulled list in place.
      */
     public function pullDenylist(): void
     {
         $source = $this->source();
         $timestamp = (string) now()->timestamp;
+        $signature = $this->sign($timestamp, $source);
 
-        $data = Http::timeout((int) config('scanner-guard.http.timeout', 2))
+        $response = Http::timeout((int) config('scanner-guard.http.timeout', 2))
             ->acceptJson()
-            ->withHeaders(['X-Source' => $source, 'X-Timestamp' => $timestamp, 'X-Signature' => $this->sign($timestamp, $source)])
+            ->withHeaders(['X-Source' => $source, 'X-Timestamp' => $timestamp, 'X-Signature' => $signature])
             ->get((string) config('scanner-guard.http.url'))
-            ->throw()
-            ->json();
+            ->throw();
 
+        $this->verifyResponse($response, $signature, $source);
+
+        $data = $response->json();
         $this->applyDenylist(is_array($data) ? $data : []);
+    }
+
+    /**
+     * An unsigned response (a central app older than signed responses) passes
+     * unless http.require_signed_response is on; a bad signature never does.
+     */
+    protected function verifyResponse(Response $response, string $requestSignature, string $source): void
+    {
+        $timestamp = $response->header('X-Timestamp');
+        $signature = $response->header('X-Signature');
+
+        if ($signature === '' && ! config('scanner-guard.http.require_signed_response', false)) {
+            return;
+        }
+
+        if (! ctype_digit($timestamp)
+            || abs(now()->timestamp - (int) $timestamp) > (int) config('scanner-guard.http.tolerance', 300)
+            || ! hash_equals($this->signResponse($timestamp, $requestSignature, $source, $response->body()), $signature)) {
+            throw new RuntimeException($signature === '' ? 'The central denylist response is not signed.' : 'The central denylist response has an invalid signature.');
+        }
     }
 
     /**

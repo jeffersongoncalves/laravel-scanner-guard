@@ -64,7 +64,8 @@ use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
 - **Unban**: `ScannerGuard::unban($ipHash)` — deleting the row alone leaves the cached ban active.
 - **Drivers**: `driver` = `database` (default), `cache` (cache-only bans) or `http` (satellite
   forwarding bans to a central app over HMAC-signed requests; the central app sets
-  `http.server.enabled`, satellites can pull its denylist with `http.pull`).
+  `http.server.enabled`, satellites can pull its denylist with `http.pull`; the response is
+  signed, and `http.require_signed_response` refuses an unsigned one).
 - **Server agents**: `scanner-guard-agent` (Go binary, nftables) acts as an `http` satellite and
   sends signed heartbeats to `POST {http.server.path}/heartbeat`, stored one row per source in
   `Models\ScannerGuardAgent` (`online()` / `offline()` scopes, `isOnline()`, stale after 300s).

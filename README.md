@@ -495,9 +495,30 @@ user-agent patterns, including its runtime (database) blocklist. The satellite:
 - with `sinks` configured, re-syncs its own sinks after each pull (the satellite has no database,
   so this replaces the scheduled sync).
 
-A failed pull is logged, exits non-zero and keeps the last list. The response carries raw IPs and
-isn't signed itself, so use an `https` URL. Only bans whose raw IP is still in the central cache
-are served (see [Privacy tradeoff](#privacy-tradeoff)).
+A failed pull is logged, exits non-zero and keeps the last list. The response carries raw IPs, so use
+an `https` URL. Only bans whose raw IP is still in the central cache are served (see
+[Privacy tradeoff](#privacy-tradeoff)).
+
+The central app signs the response with the secret of that source, in `X-Timestamp` and `X-Signature`:
+
+```
+hash_hmac('sha256', "response\n{timestamp}\n{request X-Signature}\n{source}\n{body}", secret)
+```
+
+So nobody on the way (a CDN, a load balancer) can change the list, or answer with another request's.
+A bad signature or a timestamp outside `http.tolerance` fails the pull. An unsigned response, from a
+central app older than this, is still accepted: once the central app signs, refuse it on each satellite:
+
+```dotenv
+SCANNER_GUARD_HTTP_REQUIRE_SIGNED_RESPONSE=true
+```
+
+A config published before this option has no line reading that env: add
+`'require_signed_response' => env('SCANNER_GUARD_HTTP_REQUIRE_SIGNED_RESPONSE', false)` to its `http`
+block, or the setting is silently ignored.
+
+Signing doesn't hide the list from whoever terminates TLS. A proxy that rewrites JSON bodies breaks the
+signature (the response is sent with `Cache-Control: no-transform`).
 
 #### Server agents (SSH and other logs)
 
@@ -534,6 +555,7 @@ return [
         'secret' => null,
         'timeout' => 2,
         'tolerance' => 300,
+        'require_signed_response' => false, // refuse an unsigned pull response
         'server' => ['enabled' => false, 'path' => 'scanner-guard/bans'],
     ],
     'table' => 'scanner_guard_bans',

@@ -56,6 +56,11 @@ return [
     | patterns from a GET on `url`. A failed pull keeps the last list; with
     | `sinks` configured each pull also re-syncs this app's sinks.
     |
+    | `require_signed_response` (satellite): the central app signs its answer
+    | to the pull. A bad signature always fails the pull; turn this on to
+    | also refuse an unsigned one, once the central app runs a version that
+    | signs. Until then whoever terminates TLS can strip the signature.
+    |
     | `source` names this satellite in every forwarded ban (null = app.name);
     | the central app stores it in the ban's `source` column (needs the
     | add_source migration there). Null `source` on a row = banned locally.
@@ -75,6 +80,7 @@ return [
         'secrets' => [],
         'timeout' => env('SCANNER_GUARD_HTTP_TIMEOUT', 2),
         'tolerance' => env('SCANNER_GUARD_HTTP_TOLERANCE', 300),
+        'require_signed_response' => env('SCANNER_GUARD_HTTP_REQUIRE_SIGNED_RESPONSE', false),
 
         'server' => [
             'enabled' => env('SCANNER_GUARD_HTTP_SERVER_ENABLED', false),
