@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.3.0 - 2026-11-25
+
+### What's new
+
+#### Signed denylist response
+
+The central app signs its answer to the denylist `GET` with the source's secret, bound to the request it answers, so nobody on the way (a CDN, a load balancer) can change the list. `scanner-guard:pull-denylist` verifies it: a bad signature fails the pull and keeps the last list. `SCANNER_GUARD_HTTP_REQUIRE_SIGNED_RESPONSE=true` also refuses an unsigned response (off by default, for older central apps).
+
+#### IP ignore list
+
+`ip_ignore`, or runtime rows with `ScannerGuardBlocklistEntry::TYPE_IGNORE` (no new migration), lists IPs and CIDR ranges never blocked or banned:
+
+- they skip every check of the middleware, and a ban of them (local or forwarded) is never stored;
+- a ban stored before the IP was listed stops blocking it, and leaves the denylist and the sinks;
+- satellites get the list with each pull.
+
+Invalid entries and ranges wider than /8 (IPv4) or /16 (IPv6) have no effect. An `ip_blocklist` range that contains an ignored IP still reaches the sinks whole.
+
+### Upgrading
+
+No migration. Update the central app first, then the satellites, and only then turn on `require_signed_response` on each satellite.
+
+A config published earlier has no line reading the new env. Add it to its `http` block, or the setting is silently ignored:
+
+```php
+'require_signed_response' => env('SCANNER_GUARD_HTTP_REQUIRE_SIGNED_RESPONSE', false),
+
+```
+**Full Changelog**: https://github.com/jeffersongoncalves/laravel-scanner-guard/compare/2.2.1...2.3.0
+
 ## 2.2.1 - 2026-11-24
 
 ### Security
@@ -49,6 +79,7 @@ Only needed to use `store_details`. Publish and run the new migration on the cen
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
 
+
 ```
 A config published earlier still defaults `purge_expired_after_days` to `0`: update that line, or set `SCANNER_GUARD_PURGE_EXPIRED_AFTER_DAYS`, to keep the history. After rotating `APP_KEY`, keep the old key in `APP_PREVIOUS_KEYS` to read stored IPs.
 
@@ -75,6 +106,7 @@ Publish and run the new migration on the central app:
 ```bash
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
+
 
 ```
 Satellites need no change.
@@ -221,6 +253,7 @@ php artisan migrate
 
 
 
+
 ```
 It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
 
@@ -285,6 +318,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -336,6 +370,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
