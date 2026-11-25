@@ -86,16 +86,17 @@ class ScannerGuard
      * Central side of the pull: active bans whose raw IP is still cached (one
      * per IP, latest expiry) plus the static lists.
      *
-     * @return array{bans: list<array{ip: string, reason: string, expires_at: string}>, ip_blocklist: list<string>, user_agent_patterns: list<string>}
+     * @return array{bans: list<array{ip: string, reason: string, expires_at: string}>, ip_blocklist: list<string>, user_agent_patterns: list<string>, ignore: list<string>}
      */
     public function denylist(): array
     {
         $bans = [];
+        $ignore = $this->ipIgnore();
 
         foreach (ScannerGuardBan::query()->active()->orderByDesc('expires_at')->orderBy('id')->get() as $ban) {
             $ip = $this->rawIpFor($ban->ip_hash);
 
-            if ($ip !== null) {
+            if ($ip !== null && ! IpUtils::checkIp($ip, $ignore)) {
                 $bans[$ip] ??= ['ip' => $ip, 'reason' => $ban->reason, 'expires_at' => $ban->expires_at->toIso8601String()];
             }
         }
@@ -104,6 +105,7 @@ class ScannerGuard
             'bans' => array_values($bans),
             'ip_blocklist' => $this->ipBlocklist(),
             'user_agent_patterns' => $this->userAgentPatterns(),
+            'ignore' => $ignore,
         ];
     }
 
@@ -112,18 +114,25 @@ class ScannerGuard
      * win over a ban of the same IP), then one entry per banned IP whose raw
      * IP is still cached, latest expiry first. Database bans with the
      * "database" driver, the last pull with "http", nothing else otherwise.
+     * Ignored IPs are left out; a blocklist range that merely contains one is
+     * not, a sink can't hold the exception.
      *
      * @return list<array{ip: string, reason: string, expires_at: string|null}>
      */
     public function denylistEntries(): array
     {
         $entries = [];
+        $ignore = $this->ipIgnore();
 
         foreach ($this->ipBlocklist() as $range) {
             if (! $this->isValidRange($range)) {
                 // Passed on as-is, a bad entry would break the sink (e.g. fail `nginx -t`).
                 Log::warning('scanner-guard: skipped invalid ip_blocklist entry', ['entry' => $range]);
 
+                continue;
+            }
+
+            if (! str_contains($range, '/') && IpUtils::checkIp($range, $ignore)) {
                 continue;
             }
 
@@ -143,7 +152,7 @@ class ScannerGuard
         foreach ($bans as $ban) {
             $ip = $this->rawIpFor($ban['ip_hash']);
 
-            if ($ip !== null) {
+            if ($ip !== null && ! IpUtils::checkIp($ip, $ignore)) {
                 // A forwarded or pulled reason is free text; sinks write it into config files,
                 // where a newline would end their comment.
                 $entries[$ip] ??= ['ip' => $ip, 'reason' => (string) preg_replace('/[^\w.-]/', '_', $ban['reason']), 'expires_at' => $ban['expires_at']];
@@ -238,11 +247,17 @@ class ScannerGuard
 
         $strings = fn (mixed $list): array => array_values(array_filter((array) $list, 'is_string'));
 
+        // Absent: a central app older than the ignore list, keep the last one. An empty list is a list.
+        $ignore = array_key_exists('ignore', $data)
+            ? $strings($data['ignore'])
+            : ($this->pulledBlocklist()[ScannerGuardBlocklistEntry::TYPE_IGNORE] ?? []);
+
         // Forever: an unreachable central app must not lift the last known list.
         $this->cache()->forever($this->pulledBansKey(), $pulled);
         $this->cache()->forever($this->pulledBlocklistKey(), [
             ScannerGuardBlocklistEntry::TYPE_IP => $strings($data['ip_blocklist'] ?? []),
             ScannerGuardBlocklistEntry::TYPE_USER_AGENT => $strings($data['user_agent_patterns'] ?? []),
+            ScannerGuardBlocklistEntry::TYPE_IGNORE => $ignore,
         ]);
     }
 
@@ -332,6 +347,36 @@ class ScannerGuard
     public function ipBlocklist(): array
     {
         return $this->mergeBlocklist((array) config('scanner-guard.ip_blocklist', []), ScannerGuardBlocklistEntry::TYPE_IP);
+    }
+
+    /**
+     * Never blocked or banned, see ipIgnore().
+     */
+    public function isIpIgnored(string $ip): bool
+    {
+        $ignore = $this->ipIgnore();
+
+        return $ignore !== [] && IpUtils::checkIp($ip, $ignore);
+    }
+
+    /**
+     * Config ip_ignore plus the database "ignore" entries. Invalid entries
+     * are dropped, and so are ranges wide enough to exempt much of the
+     * internet (a stray 0.0.0.0/0 would turn the package off).
+     *
+     * @return list<string>
+     */
+    public function ipIgnore(): array
+    {
+        return array_values(array_filter(
+            $this->mergeBlocklist((array) config('scanner-guard.ip_ignore', []), ScannerGuardBlocklistEntry::TYPE_IGNORE),
+            function (string $entry): bool {
+                $prefix = explode('/', $entry, 2)[1] ?? null;
+
+                return $this->isValidRange($entry)
+                    && ($prefix === null || (int) $prefix >= (str_contains($entry, ':') ? 16 : 8));
+            },
+        ));
     }
 
     /**
@@ -516,11 +561,15 @@ class ScannerGuard
     }
 
     /**
-     * @return ScannerGuardBan|null the audit row, or null when the driver isn't "database"
-     *                              or another request of the same burst already banned this IP
+     * @return ScannerGuardBan|null the audit row, or null when the driver isn't "database", the IP is
+     *                              ignored or another request of the same burst already banned it
      */
     public function ban(string $ip, string $reason, string $matchedValue, int $hitCount, ?string $path = null): ?ScannerGuardBan
     {
+        if ($this->isIpIgnored($ip)) {
+            return null;
+        }
+
         $claim = $this->banningKey($this->hashIp($ip));
 
         if (! $this->claimBan($claim)) {
@@ -580,12 +629,16 @@ class ScannerGuard
     /**
      * Receiving side of the http driver: records a ban forwarded by a
      * satellite app exactly like a local one (including store_details).
-     * Null when the same source already forwarded this IP moments ago (e.g.
-     * replicas behind a load balancer sharing a source). Every other source
+     * Null when the IP is ignored, or the same source already forwarded it
+     * moments ago (e.g. replicas behind a load balancer sharing a source). Every other source
      * gets its own row, so an incident shows each server it hit.
      */
     public function recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null, ?string $path = null): ?ScannerGuardBan
     {
+        if ($this->isIpIgnored($ip)) {
+            return null;
+        }
+
         $claim = $this->banningKey($this->hashIp($ip), $source);
 
         // The satellite chose the expiry, so this app's own durations don't bound it.

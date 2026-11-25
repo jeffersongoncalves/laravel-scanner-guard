@@ -9,8 +9,8 @@ use Illuminate\Support\Carbon;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
 
 /**
- * A runtime blocklist entry, added on top of the config `ip_blocklist` /
- * `user_agent_blocklist.patterns` (database driver only). Saving or
+ * A runtime list entry, added on top of the config `ip_blocklist` /
+ * `user_agent_blocklist.patterns` / `ip_ignore` (database driver only). Saving or
  * deleting a model refreshes the cached list and re-syncs the sinks; a mass
  * query()->delete() / update() skips model events, so call
  * ScannerGuard::blocklistChanged() yourself after one.
@@ -27,6 +27,9 @@ class ScannerGuardBlocklistEntry extends Model
     public const TYPE_IP = 'ip';
 
     public const TYPE_USER_AGENT = 'user_agent';
+
+    /** Never blocked or banned: the opposite of TYPE_IP. */
+    public const TYPE_IGNORE = 'ignore';
 
     protected $table = 'scanner_guard_blocklist';
 

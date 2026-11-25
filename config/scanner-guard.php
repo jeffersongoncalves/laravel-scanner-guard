@@ -264,6 +264,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | IP Ignore List
+    |--------------------------------------------------------------------------
+    |
+    | IPs and CIDR ranges never blocked or banned, e.g. your own. They skip
+    | every check of the middleware, a ban of them is never stored (local or
+    | forwarded), and bans stored before they were listed are left out of the
+    | denylist and the sinks. Satellites and scanner-guard-agent get the list
+    | with each pull. Invalid entries and ranges wider than /8 (IPv4) or /16
+    | (IPv6) have no effect.
+    |
+    */
+    'ip_ignore' => [],
+
+    /*
+    |--------------------------------------------------------------------------
     | User-Agent Blocklist
     |--------------------------------------------------------------------------
     |

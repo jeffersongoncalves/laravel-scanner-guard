@@ -35,6 +35,10 @@ class BlockScannerRequests
             return $next($request);
         }
 
+        if ($this->scannerGuard->isIpIgnored($ip)) {
+            return $next($request);
+        }
+
         $status = (int) config('scanner-guard.response_status', 404);
 
         // Cheapest checks first: config-only static blocklist, then already banned.
