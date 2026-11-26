@@ -132,3 +132,28 @@ it('does nothing with a driver other than database', function () {
 
     expect($this->guard->rawIpFor($hash))->toBeNull();
 });
+
+it('serves bans whose raw ip was lost from the ip the row stored, with details on', function () {
+    config(['scanner-guard.store_details' => true]);
+    $ban = banAndLoseRawIp('203.0.113.60');
+    banAndLoseRawIp('2001:db8::60');
+
+    expect(array_column($this->guard->denylist()['bans'], 'ip'))->toEqualCanonicalizing(['203.0.113.60', '2001:db8::60'])
+        ->and(array_column($this->guard->denylistEntries(), 'ip'))->toEqualCanonicalizing(['203.0.113.60', '2001:db8::60'])
+        // Cached back, until the ban expires.
+        ->and($this->guard->rawIpFor($ban->ip_hash))->toBe('203.0.113.60');
+
+    $this->travelTo($ban->expires_at->copy()->addSecond());
+    expect($this->guard->rawIpFor($ban->ip_hash))->toBeNull();
+});
+
+it('still leaves out a lost raw ip without stored details, or one that does not match its hash', function () {
+    banAndLoseRawIp('203.0.113.61'); // details off: the row has no ip
+
+    config(['scanner-guard.store_details' => true]);
+    $tampered = banAndLoseRawIp('203.0.113.62');
+    $tampered->forceFill(['ip' => '198.51.100.9'])->save();
+
+    expect($this->guard->denylist()['bans'])->toBe([])
+        ->and($this->guard->denylistEntries())->toBe([]);
+});
