@@ -118,6 +118,10 @@ ScannerGuardAgent::query()->offline()->get();     // no heartbeat for STALE_AFTE
 ScannerGuardAgent::query()->online(120)->count(); // custom threshold, in seconds
 ```
 
+`ScannerGuard::agentRules()` serves the `scanner_guard_agent_rules` rows (`ScannerGuardAgentRule`)
+as the denylist's `agent_rules` object, in seconds; `toAgentPayload()` returns null for a row out
+of range, which is left out. Null (key absent) until the migration ran.
+
 `source` is case-sensitive (like the `http.secrets` keys; `utf8mb4_bin` on MySQL/MariaDB).
 
 ## Troubleshooting

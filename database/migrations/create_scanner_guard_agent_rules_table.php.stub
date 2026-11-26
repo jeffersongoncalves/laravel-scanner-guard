@@ -1,0 +1,25 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('scanner_guard_agent_rules', function (Blueprint $table) {
+            $table->id();
+            $table->string('name', 30)->unique(); // an agent rule name, at most 30 characters there too
+            $table->unsignedInteger('threshold');
+            $table->string('window', 20);
+            $table->string('ban');
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('scanner_guard_agent_rules');
+    }
+};

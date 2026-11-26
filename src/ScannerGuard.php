@@ -20,6 +20,7 @@ use Illuminate\Support\Str;
 use InvalidArgumentException;
 use JeffersonGoncalves\ScannerGuard\Contracts\DenylistSink;
 use JeffersonGoncalves\ScannerGuard\Jobs\SyncDenylist;
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentRule;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBlocklistEntry;
 use JeffersonGoncalves\VisitorFingerprint\Support\IpAnonymizer;
@@ -104,7 +105,7 @@ class ScannerGuard
      * Central side of the pull: active bans whose raw IP is still cached (one
      * per IP, latest expiry) plus the static lists.
      *
-     * @return array{bans: list<array{ip: string, reason: string, expires_at: string}>, ip_blocklist: list<string>, user_agent_patterns: list<string>, ignore: list<string>}
+     * @return array{bans: list<array{ip: string, reason: string, expires_at: string}>, ip_blocklist: list<string>, user_agent_patterns: list<string>, ignore: list<string>, agent_rules?: object}
      */
     public function denylist(): array
     {
@@ -119,12 +120,52 @@ class ScannerGuard
             }
         }
 
-        return [
+        $denylist = [
             'bans' => array_values($bans),
             'ip_blocklist' => $this->ipBlocklist(),
             'user_agent_patterns' => $this->userAgentPatterns(),
             'ignore' => $ignore,
         ];
+
+        // Absent until the agent_rules migration ran: agents then keep what they have.
+        $rules = $this->agentRules();
+
+        if ($rules !== null) {
+            // An object even when empty: agents read a JSON object, and [] would not be one.
+            $denylist['agent_rules'] = (object) $rules;
+        }
+
+        return $denylist;
+    }
+
+    /**
+     * Rule settings for scanner-guard-agent, keyed by rule name; rows out of
+     * range are left out (the agents keep their own). Null without the table.
+     *
+     * @return array<string, array{threshold: int, window: int, ban: list<int>}>|null
+     */
+    public function agentRules(): ?array
+    {
+        // ponytail: one schema query per pull; agents pull once a minute each.
+        if (! rescue(fn (): bool => Schema::hasTable((new ScannerGuardAgentRule)->getTable()), false, report: false)) {
+            return null;
+        }
+
+        $rules = [];
+
+        foreach (ScannerGuardAgentRule::query()->orderBy('name')->get() as $rule) {
+            $payload = $rule->toAgentPayload();
+
+            if ($payload === null) {
+                Log::warning('scanner-guard: skipped invalid agent rule', ['name' => $rule->name]);
+
+                continue;
+            }
+
+            $rules[$rule->name] = $payload;
+        }
+
+        return $rules;
     }
 
     /**

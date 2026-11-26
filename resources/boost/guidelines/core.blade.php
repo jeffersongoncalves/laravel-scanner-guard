@@ -71,6 +71,8 @@ use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
 - **Server agents**: `scanner-guard-agent` (Go binary, nftables) acts as an `http` satellite and
   sends signed heartbeats to `POST {http.server.path}/heartbeat`, stored one row per source in
   `Models\ScannerGuardAgent` (`online()` / `offline()` scopes, `isOnline()`, stale after 300s).
+  `Models\ScannerGuardAgentRule` rows (`name`, `threshold`, `window` "10m", `ban` "1d, 7d") are served
+  in seconds as the denylist's `agent_rules` and override the agents' rules of that name.
 - **Denylist sinks**: `scanner-guard.sinks` lists `Contracts\DenylistSink` classes (separate
   packages: `laravel-scanner-guard-nginx`, `-apache`, `-caddy`, `-frankenphp`, `-haproxy`,
   `-cloudflare`, `-aws-waf`; Traefik pulls via
