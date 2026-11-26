@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.5.1 - 2026-11-26
+
+### Fixed
+
+- A cache flush no longer drops the older bans from the denylist pull and the sinks. With `store_details` on, a ban whose cached raw IP is gone is served from the IP its row stored (encrypted), checked against its hash and cached back until the ban expires. Bans reported by scanner-guard-agent never hit the central app again, so before this they stayed out for good (#58).
+
+No migration. Without stored details nothing changes.
+
 ## 2.5.0 - 2026-11-26
 
 ### Added
@@ -22,6 +30,7 @@ Bans forwarded by [scanner-guard-agent](https://github.com/jeffersongoncalves/sc
 
 ```php
 $ban->evidence; // ['<ip> - [25/Nov/2026:22:19:53 -0300] "GET /.env.staging HTTP/2.0" 403 rule=dotfile ...']
+
 
 
 ```
@@ -61,6 +70,7 @@ A config published earlier has no line reading the new env. Add it to its `http`
 
 ```php
 'require_signed_response' => env('SCANNER_GUARD_HTTP_REQUIRE_SIGNED_RESPONSE', false),
+
 
 
 
@@ -117,6 +127,7 @@ php artisan migrate
 
 
 
+
 ```
 A config published earlier still defaults `purge_expired_after_days` to `0`: update that line, or set `SCANNER_GUARD_PURGE_EXPIRED_AFTER_DAYS`, to keep the history. After rotating `APP_KEY`, keep the old key in `APP_PREVIOUS_KEYS` to read stored IPs.
 
@@ -143,6 +154,7 @@ Publish and run the new migration on the central app:
 ```bash
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
+
 
 
 
@@ -295,6 +307,7 @@ php artisan migrate
 
 
 
+
 ```
 It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
 
@@ -362,6 +375,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -413,6 +427,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
