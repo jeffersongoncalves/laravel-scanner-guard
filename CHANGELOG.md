@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.5.0 - 2026-11-26
+
+### Added
+
+- Agent rule settings, set once for every server: the new `create_scanner_guard_agent_rules_table` migration and `ScannerGuardAgentRule` model hold a threshold, window (`10m`) and ban steps (`1d, 7d, 30d`) per scanner-guard-agent rule name. The denylist response serves them in seconds under `agent_rules`, signed with the rest (#57).
+
+### Upgrading
+
+Re-publish the migrations and run `php artisan migrate` on the central app. Until then the key is absent and agents keep their own settings. Agents 2.5.0+ apply the rows; older agents ignore them.
+
 ## 2.4.0 - 2026-11-26
 
 ### What's new
@@ -12,6 +22,7 @@ Bans forwarded by [scanner-guard-agent](https://github.com/jeffersongoncalves/sc
 
 ```php
 $ban->evidence; // ['<ip> - [25/Nov/2026:22:19:53 -0300] "GET /.env.staging HTTP/2.0" 403 rule=dotfile ...']
+
 
 ```
 - Up to 20 lines of 1024 characters per ban; anything else is refused with `422`.
@@ -50,6 +61,7 @@ A config published earlier has no line reading the new env. Add it to its `http`
 
 ```php
 'require_signed_response' => env('SCANNER_GUARD_HTTP_REQUIRE_SIGNED_RESPONSE', false),
+
 
 
 ```
@@ -104,6 +116,7 @@ php artisan migrate
 
 
 
+
 ```
 A config published earlier still defaults `purge_expired_after_days` to `0`: update that line, or set `SCANNER_GUARD_PURGE_EXPIRED_AFTER_DAYS`, to keep the history. After rotating `APP_KEY`, keep the old key in `APP_PREVIOUS_KEYS` to read stored IPs.
 
@@ -130,6 +143,7 @@ Publish and run the new migration on the central app:
 ```bash
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
+
 
 
 
@@ -280,6 +294,7 @@ php artisan migrate
 
 
 
+
 ```
 It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
 
@@ -346,6 +361,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -397,6 +413,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
