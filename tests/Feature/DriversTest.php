@@ -341,6 +341,17 @@ it('stores the evidence of an agent ban encrypted when details are on', function
         ->and(DB::table('scanner_guard_bans')->value('evidence'))->not->toContain('.env.staging');
 });
 
+it('stores the largest evidence the endpoint accepts, multibyte included', function () {
+    config(['scanner-guard.store_details' => true]);
+    enableServerRoute();
+    // 4-byte characters, escaped to 12 bytes each in the encrypted JSON: past TEXT's 64 KB on MySQL.
+    $evidence = array_fill(0, 20, str_repeat('😀', 1024));
+
+    postBan(signedBan($this->scannerGuard, ['evidence' => $evidence]))->assertCreated();
+
+    expect(ScannerGuardBan::query()->sole()->evidence)->toBe($evidence);
+});
+
 it('stores no evidence when details are off, or when the agent sent none', function (bool $details, array $overrides) {
     config(['scanner-guard.store_details' => $details]);
     enableServerRoute();
@@ -356,12 +367,20 @@ it('stores no evidence when details are off, or when the agent sent none', funct
 
 it('still stores the ban when the evidence migration has not run yet', function () {
     Schema::table('scanner_guard_bans', fn (Blueprint $table) => $table->dropColumn('evidence'));
-    config(['scanner-guard.store_details' => true]);
-    enableServerRoute();
 
-    postBan(signedBan($this->scannerGuard, ['evidence' => ['GET /.env']]))->assertCreated();
+    try {
+        config(['scanner-guard.store_details' => true]);
+        enableServerRoute();
 
-    expect(ScannerGuardBan::query()->sole()->path)->toBe('wp-admin');
+        postBan(signedBan($this->scannerGuard, ['evidence' => ['GET /.env']]))->assertCreated();
+
+        expect(ScannerGuardBan::query()->sole()->path)->toBe('wp-admin');
+    } finally {
+        // MySQL and PostgreSQL roll the package migrations back between tests: its down() drops this column.
+        if (! Schema::hasColumn('scanner_guard_bans', 'evidence')) {
+            Schema::table('scanner_guard_bans', fn (Blueprint $table) => $table->mediumText('evidence')->nullable());
+        }
+    }
 });
 
 it('rejects evidence that is not a short list of strings', function (mixed $evidence) {

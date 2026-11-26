@@ -9,8 +9,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table(config('scanner-guard.table', 'scanner_guard_bans'), function (Blueprint $table) {
-            // Encrypted JSON list of the log lines a scanner-guard-agent banned on.
-            $table->text('evidence')->nullable();
+            // Encrypted JSON list of the log lines a scanner-guard-agent banned on. Medium: 20 lines of
+            // 1024 multibyte characters, JSON-escaped then encrypted, reach ~440 KB, past TEXT's 64 KB on MySQL.
+            $table->mediumText('evidence')->nullable();
         });
     }
 
