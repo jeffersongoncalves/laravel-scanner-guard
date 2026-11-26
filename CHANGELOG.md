@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.4.0 - 2026-11-26
+
+### What's new
+
+#### Log lines of agent bans
+
+Bans forwarded by [scanner-guard-agent](https://github.com/jeffersongoncalves/scanner-guard-agent) (2.3.0+) carry `evidence`: the log lines that tripped the agent's rule, with the banned IP replaced by `<ip>`. With `store_details` on, the central app stores them encrypted in the new `evidence` column, so you can see what an IP actually tried:
+
+```php
+$ban->evidence; // ['<ip> - [25/Nov/2026:22:19:53 -0300] "GET /.env.staging HTTP/2.0" 403 rule=dotfile ...']
+
+```
+- Up to 20 lines of 1024 characters per ban; anything else is refused with `422`.
+- Hidden from `toArray()` / `toJson()`, like `ip`. The lines come from the attacker (query strings, User-Agents): escape them when displaying them.
+- Not stored with details off, nor for bans without lines (older agents, local bans).
+
+### Upgrading
+
+New migration, `add_evidence_to_scanner_guard_bans_table`: re-publish the migrations and run `php artisan migrate` on the central app, then restart its workers. Agents can be upgraded before or after it: until the column exists, the ban is stored as before, without its lines.
+
+**Full Changelog**: https://github.com/jeffersongoncalves/laravel-scanner-guard/compare/2.3.0...2.4.0
+
 ## 2.3.0 - 2026-11-25
 
 ### What's new
@@ -28,6 +50,7 @@ A config published earlier has no line reading the new env. Add it to its `http`
 
 ```php
 'require_signed_response' => env('SCANNER_GUARD_HTTP_REQUIRE_SIGNED_RESPONSE', false),
+
 
 ```
 **Full Changelog**: https://github.com/jeffersongoncalves/laravel-scanner-guard/compare/2.2.1...2.3.0
@@ -80,6 +103,7 @@ php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
 
 
+
 ```
 A config published earlier still defaults `purge_expired_after_days` to `0`: update that line, or set `SCANNER_GUARD_PURGE_EXPIRED_AFTER_DAYS`, to keep the history. After rotating `APP_KEY`, keep the old key in `APP_PREVIOUS_KEYS` to read stored IPs.
 
@@ -106,6 +130,7 @@ Publish and run the new migration on the central app:
 ```bash
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
+
 
 
 ```
@@ -254,6 +279,7 @@ php artisan migrate
 
 
 
+
 ```
 It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
 
@@ -319,6 +345,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -370,6 +397,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
