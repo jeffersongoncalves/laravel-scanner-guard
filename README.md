@@ -385,7 +385,10 @@ active bans from the database, then looks up each one's raw IP in that cache ent
 entry has expired or been evicted (a `cache:clear`, an "array" driver that doesn't survive between
 requests, LRU eviction under memory pressure, ...), that ban is silently left out of the sinks until
 the IP comes back: a banned request whose raw IP is missing caches it again until the ban expires and
-re-syncs the sinks (`database` driver, at most one lookup a minute per IP).
+re-syncs the sinks (`database` driver, at most one lookup a minute per IP). With `store_details` on,
+the row's own encrypted IP fills the gap instead: the denylist pull and the sinks read it and cache it
+back until the ban expires, so a cache flush no longer drops the older bans (a ban agents reported
+never comes back to the central app, so it would otherwise stay out for good).
 
 This means: the **table alone never reveals an IP**, and the **app-layer ban still applies
 correctly regardless** (the fast-path/DB-fallback ban check in `isBanned()` only ever needs the

@@ -113,7 +113,7 @@ class ScannerGuard
         $ignore = $this->ipIgnore();
 
         foreach (ScannerGuardBan::query()->active()->orderByDesc('expires_at')->orderBy('id')->get() as $ban) {
-            $ip = $this->rawIpFor($ban->ip_hash);
+            $ip = $this->rawIpForBan($ban);
 
             if ($ip !== null && ! IpUtils::checkIp($ip, $ignore)) {
                 $bans[$ip] ??= ['ip' => $ip, 'reason' => $ban->reason, 'expires_at' => $ban->expires_at->toIso8601String()];
@@ -202,14 +202,14 @@ class ScannerGuard
         // (latest expiry, id breaking ties) is the one passed on.
         $bans = match ($this->driver()) {
             'database' => ScannerGuardBan::query()->active()->orderByDesc('expires_at')->orderBy('id')->get()
-                ->map(fn (ScannerGuardBan $ban): array => ['ip_hash' => $ban->ip_hash, 'reason' => $ban->reason, 'expires_at' => $ban->expires_at->toIso8601String()])
+                ->map(fn (ScannerGuardBan $ban): array => ['ip' => $this->rawIpForBan($ban), 'reason' => $ban->reason, 'expires_at' => $ban->expires_at->toIso8601String()])
                 ->all(),
-            'http' => collect($this->pulledBans())->map(fn (array $ban, string $hash): array => ['ip_hash' => $hash] + $ban)->values()->all(),
+            'http' => collect($this->pulledBans())->map(fn (array $ban, string $hash): array => ['ip' => $this->rawIpFor($hash)] + $ban)->values()->all(),
             default => [],
         };
 
         foreach ($bans as $ban) {
-            $ip = $this->rawIpFor($ban['ip_hash']);
+            $ip = $ban['ip'];
 
             if ($ip !== null && ! IpUtils::checkIp($ip, $ignore)) {
                 // A forwarded or pulled reason is free text; sinks write it into config files,
@@ -823,6 +823,33 @@ class ScannerGuard
         $steps = array_values((array) config('scanner-guard.escalation'));
 
         return (int) $steps[min($offense, count($steps)) - 1];
+    }
+
+    /**
+     * The raw IP of a ban row: the cached one, or else the IP the row stored
+     * itself (store_details), cached back until the ban expires. Without it a
+     * cache flush would drop every older ban from the denylist and the sinks.
+     * Null when neither is there, or the stored IP can't be decrypted (a key
+     * missing from APP_PREVIOUS_KEYS) or doesn't match the row's hash.
+     */
+    public function rawIpForBan(ScannerGuardBan $ban): ?string
+    {
+        $ip = $this->rawIpFor($ban->ip_hash);
+
+        if ($ip !== null) {
+            return $ip;
+        }
+
+        $ip = rescue(fn (): mixed => $ban->ip, null, report: false);
+
+        if (! is_string($ip) || filter_var($ip, FILTER_VALIDATE_IP) === false || ! hash_equals($ban->ip_hash, $this->hashIp($ip))) {
+            return null;
+        }
+
+        // add(), not put(): a newer, longer ban cached meanwhile keeps its own expiry.
+        $this->cache()->add($this->rawIpKey($ban->ip_hash), $ip, $ban->expires_at);
+
+        return $ip;
     }
 
     /**
