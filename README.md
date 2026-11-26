@@ -583,6 +583,37 @@ $agent->isOnline();
 The heartbeat is checked like a forwarded ban (signature, timestamp tolerance, replay), and its body
 is validated before it is stored.
 
+##### Agent rule settings, set once for every server
+
+Each agent reads its rules from its own `agent.yaml`. To change a rule's threshold, window or ban
+steps on every server at once, run the `create_scanner_guard_agent_rules_table` migration and add a
+row per rule name (filament-scanner-guard has a page for it):
+
+```php
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentRule;
+
+ScannerGuardAgentRule::query()->create([
+    'name' => 'web_attack',   // the agent rule name
+    'threshold' => 5,          // matches...
+    'window' => '10m',         // ...within this window ban the IP
+    'ban' => '1d, 7d, 30d',    // one duration per offense, the last one repeats
+]);
+```
+
+Durations are a number and `s`, `m`, `h` or `d`. The pull sends them in seconds under
+`agent_rules`, signed with the rest of the denylist:
+
+```json
+"agent_rules": {"web_attack": {"threshold": 5, "window": 600, "ban": [86400, 604800, 2592000]}}
+```
+
+The agents (2.5.0+) apply them to their rule of that name within a pull interval, and go back to
+their `agent.yaml` once the row is deleted. The patterns and the log each rule reads stay on the
+server: the central app can tune a rule, never make an agent read another file. A row out of range
+(threshold over 10000, window over 30 days, a ban step over 365 days or more than 10 steps) is
+left out, and the agents keep their own values. Without the migration the key is absent and the
+agents keep the last settings they received.
+
 ## Configuration
 
 ```php

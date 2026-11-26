@@ -23,6 +23,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static bool isIpIgnored(string $ip)
  * @method static list<string> ipIgnore()
  * @method static list<string> userAgentPatterns()
+ * @method static array<string, array{threshold: int, window: int, ban: list<int>}>|null agentRules()
  * @method static void blocklistChanged()
  * @method static string|null rawIpFor(string $ipHash)
  * @method static \Illuminate\Support\Collection<int, array{date: string, bans_count: int, hits_total: int, reason_stats: array<string, int>, top_matched_values: array<string, int>}> dailyStats(int $days = 14)
