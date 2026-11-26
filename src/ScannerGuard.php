@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use JeffersonGoncalves\ScannerGuard\Contracts\DenylistSink;
@@ -35,6 +36,9 @@ use Throwable;
  */
 class ScannerGuard
 {
+    /** Whether the add_evidence migration ran, checked once per process. */
+    protected ?bool $hasEvidenceColumn = null;
+
     public function cache(): Repository
     {
         return Cache::store(config('scanner-guard.store'));
@@ -932,7 +936,8 @@ class ScannerGuard
             'source' => $source,
             'ip' => $details ? $ip : null,
             'path' => $details ? $path : null,
-            'evidence' => $details && $evidence ? $evidence : null,
+            // Agents may be upgraded before the central app runs the migration: never let it cost the ban.
+            'evidence' => $details && $evidence && $this->hasEvidenceColumn() ? $evidence : null,
         ], fn ($value) => $value !== null);
 
         $ban = $this->withBanLock($attributes['ip_hash'], function () use ($attributes, $ip, $expiresAt): ScannerGuardBan {
@@ -951,6 +956,16 @@ class ScannerGuard
         }
 
         return $ban;
+    }
+
+    // ponytail: cached for the process, so a long-running worker sees the migration after its next restart.
+    protected function hasEvidenceColumn(): bool
+    {
+        return $this->hasEvidenceColumn ??= rescue(
+            fn (): bool => Schema::hasColumn((new ScannerGuardBan)->getTable(), 'evidence'),
+            false,
+            report: false,
+        );
     }
 
     /**

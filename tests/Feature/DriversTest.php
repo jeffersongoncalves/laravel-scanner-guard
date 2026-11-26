@@ -3,11 +3,13 @@
 declare(strict_types=1);
 
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Sleep;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
@@ -351,6 +353,16 @@ it('stores no evidence when details are off, or when the agent sent none', funct
     'older agent' => [true, []],
     'empty list' => [true, ['evidence' => []]],
 ]);
+
+it('still stores the ban when the evidence migration has not run yet', function () {
+    Schema::table('scanner_guard_bans', fn (Blueprint $table) => $table->dropColumn('evidence'));
+    config(['scanner-guard.store_details' => true]);
+    enableServerRoute();
+
+    postBan(signedBan($this->scannerGuard, ['evidence' => ['GET /.env']]))->assertCreated();
+
+    expect(ScannerGuardBan::query()->sole()->path)->toBe('wp-admin');
+});
 
 it('rejects evidence that is not a short list of strings', function (mixed $evidence) {
     enableServerRoute();
