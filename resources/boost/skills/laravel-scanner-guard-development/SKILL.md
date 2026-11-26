@@ -172,7 +172,7 @@ Idempotent per IP for 60 seconds (atomic cache `add()`): concurrent requests of 
 pass `isBanned()` before the first ban is cached get `null` and store nothing, so a burst counts as
 one offense. `unban()` clears this guard.
 
-### `ScannerGuard::recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null, ?string $path = null): ?ScannerGuardBan`
+### `ScannerGuard::recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null, ?string $path = null, ?array $evidence = null): ?ScannerGuardBan`
 
 Central-app side of the `http` driver (behind the `http.server.enabled` route): records the ban
 like a local one, hashing the IP with this app's salt. Same 60-second guard as `ban()`, per IP **and

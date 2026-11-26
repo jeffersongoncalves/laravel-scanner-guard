@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use JeffersonGoncalves\ScannerGuard\Contracts\DenylistSink;
@@ -35,6 +36,9 @@ use Throwable;
  */
 class ScannerGuard
 {
+    /** Whether the add_evidence migration ran, checked once per process. */
+    protected ?bool $hasEvidenceColumn = null;
+
     public function cache(): Repository
     {
         return Cache::store(config('scanner-guard.store'));
@@ -669,8 +673,10 @@ class ScannerGuard
      * Null when the IP is ignored, or the same source already forwarded it
      * moments ago (e.g. replicas behind a load balancer sharing a source). Every other source
      * gets its own row, so an incident shows each server it hit.
+     *
+     * @param  list<string>|null  $evidence  log lines a scanner-guard-agent banned on, stored with store_details
      */
-    public function recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null, ?string $path = null): ?ScannerGuardBan
+    public function recordForwardedBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null, ?string $path = null, ?array $evidence = null): ?ScannerGuardBan
     {
         if ($this->isIpIgnored($ip)) {
             return null;
@@ -683,7 +689,7 @@ class ScannerGuard
             return null;
         }
 
-        return $this->releaseClaimOnFailure($claim, fn (): ScannerGuardBan => $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense, $source, $this->cleanPath($path)));
+        return $this->releaseClaimOnFailure($claim, fn (): ScannerGuardBan => $this->storeBan($ip, $reason, $matchedValue, $hitCount, $bannedAt, $expiresAt, $offense, $source, $this->cleanPath($path), $evidence));
     }
 
     /**
@@ -911,11 +917,14 @@ class ScannerGuard
         $this->cache()->put($this->rawIpKey($hash), $ip, $expiresAt);
     }
 
-    protected function storeBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null, ?string $path = null): ScannerGuardBan
+    /**
+     * @param  list<string>|null  $evidence
+     */
+    protected function storeBan(string $ip, string $reason, string $matchedValue, int $hitCount, CarbonInterface $bannedAt, CarbonInterface $expiresAt, ?int $offense = null, ?string $source = null, ?string $path = null, ?array $evidence = null): ScannerGuardBan
     {
         $details = (bool) config('scanner-guard.store_details', false);
 
-        // offense/source/ip/path only when set, so apps that never ran the matching add_* migrations keep working.
+        // offense/source/ip/path/evidence only when set, so apps that never ran the matching add_* migrations keep working.
         $attributes = array_filter([
             'ip_hash' => $this->hashIp($ip),
             'reason' => $reason,
@@ -927,6 +936,8 @@ class ScannerGuard
             'source' => $source,
             'ip' => $details ? $ip : null,
             'path' => $details ? $path : null,
+            // Agents may be upgraded before the central app runs the migration: never let it cost the ban.
+            'evidence' => $details && $evidence && $this->hasEvidenceColumn() ? $evidence : null,
         ], fn ($value) => $value !== null);
 
         $ban = $this->withBanLock($attributes['ip_hash'], function () use ($attributes, $ip, $expiresAt): ScannerGuardBan {
@@ -945,6 +956,16 @@ class ScannerGuard
         }
 
         return $ban;
+    }
+
+    // ponytail: cached for the process, so a long-running worker sees the migration after its next restart.
+    protected function hasEvidenceColumn(): bool
+    {
+        return $this->hasEvidenceColumn ??= rescue(
+            fn (): bool => Schema::hasColumn((new ScannerGuardBan)->getTable(), 'evidence'),
+            false,
+            report: false,
+        );
     }
 
     /**

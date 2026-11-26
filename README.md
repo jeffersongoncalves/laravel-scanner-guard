@@ -407,9 +407,14 @@ enabling it (existing installs: re-publish and `php artisan migrate`):
 SCANNER_GUARD_STORE_DETAILS=true
 ```
 
+Bans from [scanner-guard-agent](https://github.com/jeffersongoncalves/scanner-guard-agent) also
+carry the log lines that tripped the rule, the IP replaced by `<ip>`. They are stored encrypted in
+`evidence`, which needs the `add_evidence_to_scanner_guard_bans_table` migration as well.
+
 ```php
-$ban->ip;   // "203.0.113.5", null for bans made while it was off
-$ban->path; // "wp-admin/setup-config.php", null when the source sends none (e.g. scanner-guard-agent)
+$ban->ip;       // "203.0.113.5", null for bans made while it was off
+$ban->path;     // "wp-admin/setup-config.php", null when the source sends none (e.g. scanner-guard-agent)
+$ban->evidence; // ['<ip> - [25/Nov/2026:22:19:53 -0300] "GET /.env.staging HTTP/2.0" 403 rule=dotfile ...'], agent bans only
 
 // every server that banned an IP, on the central app:
 ScannerGuardBan::query()
@@ -426,8 +431,10 @@ ScannerGuardBan::query()
   leaves no further row. Use the web server's access log for those.
 - `path` comes from the attacker: escape it when displaying it. It can hold secrets carried in a URL
   path (e.g. a reset token) if a legitimate visitor trips the 404-flood or User-Agent rule.
-- `ip` is hidden from `toArray()` / `toJson()`, and can't be searched: look bans up with
-  `ScannerGuardBan::where('ip_hash', ScannerGuard::hashIp($ip))`.
+- `evidence` comes from the attacker too, query strings and User-Agents included: escape it, and
+  expect secrets from a legitimate visitor caught by a too-broad agent rule.
+- `ip` and `evidence` are hidden from `toArray()` / `toJson()`, and can't be searched: look bans up
+  with `ScannerGuardBan::where('ip_hash', ScannerGuard::hashIp($ip))`.
 - The sinks still read the cache entry, not this column.
 - After rotating `APP_KEY`, keep the old key in `APP_PREVIOUS_KEYS`, or reading `$ban->ip` throws a
   `DecryptException`.
@@ -435,7 +442,7 @@ ScannerGuardBan::query()
   as its row, which with [escalation](#escalating-bans-for-repeat-offenders) on can be up to
   `max(retention_days, escalation_lookback_days)` after the ban expired.
 - Turning it off doesn't erase what is stored: run
-  `ScannerGuardBan::query()->update(['ip' => null, 'path' => null])`.
+  `ScannerGuardBan::query()->update(['ip' => null, 'path' => null, 'evidence' => null])`.
 
 ### Running without a database
 
@@ -475,7 +482,8 @@ SCANNER_GUARD_HTTP_SERVER_PATH=scanner-guard/bans
 ```
 
 Each ban is POSTed as JSON (`ip`, `reason`, `matched_value`, `hit_count`, `path`, `banned_at`,
-`expires_at`, `offense`, `source`) with `X-Timestamp` and `X-Signature: hash_hmac('sha256', timestamp.body, secret)`.
+`expires_at`, `offense`, `source`; `evidence`, a list of up to 20 strings of 1024 characters, from
+scanner-guard-agent) with `X-Timestamp` and `X-Signature: hash_hmac('sha256', timestamp.body, secret)`.
 The central app rejects bad signatures and timestamps outside `http.tolerance` (default 300s) with
 `403`, and a replayed signature with `409`. It then records the ban exactly like a local one: its
 own salted `ip_hash` in the table, daily stats, and the raw IP in cache (in the row too only with
