@@ -326,6 +326,46 @@ it('stores the forwarded path on the central app when details are on', function 
     expect(ScannerGuardBan::query()->sole()->path)->toBe('wp-admin/setup-config.php');
 });
 
+it('stores the evidence of an agent ban encrypted when details are on', function () {
+    config(['scanner-guard.store_details' => true]);
+    enableServerRoute();
+    $evidence = ['<ip> - [25/Nov/2026:22:19:53 -0300] "GET /.env.staging HTTP/2.0" 403 rule=dotfile', 'Invalid user hari from <ip> port 44372'];
+
+    postBan(signedBan($this->scannerGuard, ['evidence' => $evidence]))->assertCreated();
+
+    $ban = ScannerGuardBan::query()->sole();
+    expect($ban->evidence)->toBe($evidence)
+        ->and($ban->toArray())->not->toHaveKey('evidence')
+        ->and(DB::table('scanner_guard_bans')->value('evidence'))->not->toContain('.env.staging');
+});
+
+it('stores no evidence when details are off, or when the agent sent none', function (bool $details, array $overrides) {
+    config(['scanner-guard.store_details' => $details]);
+    enableServerRoute();
+
+    postBan(signedBan($this->scannerGuard, $overrides))->assertCreated();
+
+    expect(ScannerGuardBan::query()->sole()->evidence)->toBeNull();
+})->with([
+    'details off' => [false, ['evidence' => ['GET /.env']]],
+    'older agent' => [true, []],
+    'empty list' => [true, ['evidence' => []]],
+]);
+
+it('rejects evidence that is not a short list of strings', function (mixed $evidence) {
+    enableServerRoute();
+
+    postBan(signedBan($this->scannerGuard, ['evidence' => $evidence]))->assertUnprocessable();
+
+    expect(ScannerGuardBan::query()->count())->toBe(0);
+})->with([
+    'too many lines' => [array_fill(0, 21, 'x')],
+    'line too long' => [[str_repeat('x', 1025)]],
+    'not a list' => [['a' => 'x']],
+    'not strings' => [[['x']]],
+    'a string' => ['x'],
+]);
+
 it('rejects forwarded bans with a bad signature, a stale timestamp or a replay', function () {
     enableServerRoute();
 

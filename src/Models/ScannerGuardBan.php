@@ -26,6 +26,7 @@ use Illuminate\Support\Carbon;
  * @property string|null $source satellite app that forwarded the ban (http driver), null when banned locally
  * @property string|null $ip decrypted IP, null unless scanner-guard.store_details was on at ban time
  * @property string|null $path path (no query string) that triggered the ban, same condition; attacker-controlled, escape it
+ * @property list<string>|null $evidence decrypted log lines a scanner-guard-agent banned on (its IP replaced by `<ip>`), same condition; attacker-controlled, escape it
  * @property-read bool $is_active
  *
  * @method static \Illuminate\Database\Eloquent\Builder<static> active()
@@ -53,13 +54,15 @@ class ScannerGuardBan extends Model
         'source',
         'ip',
         'path',
+        'evidence',
     ];
 
-    /** Read $ban->ip explicitly; toArray()/toJson() must not leak it by accident. */
-    protected $hidden = ['ip'];
+    /** Read $ban->ip and $ban->evidence explicitly; toArray()/toJson() must not leak them by accident. */
+    protected $hidden = ['ip', 'evidence'];
 
     protected $casts = [
         'ip' => 'encrypted',
+        'evidence' => 'encrypted:array',
         'hit_count' => 'integer',
         'offense' => 'integer',
         'banned_at' => 'datetime',

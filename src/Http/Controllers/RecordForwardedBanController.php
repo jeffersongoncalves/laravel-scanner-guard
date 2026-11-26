@@ -44,6 +44,9 @@ class RecordForwardedBanController
             'offense' => ['nullable', 'integer', 'min:1', 'max:65535'],
             'source' => ['nullable', 'string', 'max:100'],
             'path' => ['nullable', 'string'],
+            // scanner-guard-agent: the log lines that tripped the rule (it sends 20 x 512 bytes at most).
+            'evidence' => ['nullable', 'array', 'list', 'max:20'],
+            'evidence.*' => ['string', 'max:1024'],
         ])->validate();
 
         // A signature is only ever accepted once inside its tolerance window
@@ -61,6 +64,7 @@ class RecordForwardedBanController
             isset($data['offense']) ? (int) $data['offense'] : null,
             $data['source'] ?? null,
             $data['path'] ?? null,
+            $data['evidence'] ?? null,
         );
 
         return response()->noContent(201);
