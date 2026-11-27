@@ -122,6 +122,14 @@ ScannerGuardAgent::query()->online(120)->count(); // custom threshold, in second
 as the denylist's `agent_rules` object, in seconds; `toAgentPayload()` returns null for a row out
 of range, which is left out. Null (key absent) until the migration ran.
 
+Heartbeat `matches` (`{rule: n}`, agent 2.6.0+) is summed per source, rule and hour into
+`scanner_guard_agent_metrics` (`ScannerGuardAgentMetric`) by `ScannerGuard::recordAgentMatches()`.
+Report-rule events hit `POST {http.server.path}/events` (route `scanner-guard.agents.events`, 404
+until the `create_scanner_guard_agent_events_table` migration ran) and land in
+`scanner_guard_agent_events` (`ScannerGuardAgentEvent`: `fields`, `ignored`, `first_seen`, `ip` and
+`line` encrypted and only with `store_details`), firing `Events\AgentEventRecorded`. Both tables are
+pruned past `retention_days` by `scanner-guard:aggregate-and-prune`.
+
 `source` is case-sensitive (like the `http.secrets` keys; `utf8mb4_bin` on MySQL/MariaDB).
 
 ## Troubleshooting

@@ -19,18 +19,8 @@ class RecordAgentHeartbeatController
 {
     public function __invoke(Request $request, ScannerGuard $scannerGuard): Response
     {
-        $timestamp = (string) $request->header('X-Timestamp');
-        $signature = (string) $request->header('X-Signature');
+        $signature = $scannerGuard->verifyAgentRequest($request);
         $tolerance = (int) config('scanner-guard.http.tolerance', 300);
-        $secret = $scannerGuard->secretFor($request->json('source'));
-
-        abort_unless(
-            filled($secret)
-                && ctype_digit($timestamp)
-                && abs(now()->timestamp - (int) $timestamp) <= $tolerance
-                && hash_equals($scannerGuard->sign($timestamp, $request->getContent(), $secret), $signature),
-            403
-        );
 
         // The signed JSON body only, never the unsigned query string.
         $data = Validator::make($request->json()->all(), [
@@ -40,9 +30,20 @@ class RecordAgentHeartbeatController
             'rules.*' => ['string', 'max:30'],
             'active_bans' => ['nullable', 'integer', 'min:0'],
             'started_at' => ['nullable', 'date'],
+            // Matching lines per rule since the last heartbeat (agent 2.6.0+).
+            'matches' => ['nullable', 'array', 'max:100'],
+            'matches.*' => ['integer', 'min:0'],
         ])->validate();
 
         abort_unless($scannerGuard->cache()->add("scanner-guard:nonce:{$signature}", true, $tolerance * 2), 409);
+
+        $matches = [];
+        foreach ((array) ($data['matches'] ?? []) as $rule => $n) {
+            if (is_string($rule) && $rule !== '' && mb_strlen($rule) <= 30) {
+                $matches[$rule] = (int) $n;
+            }
+        }
+        $scannerGuard->recordAgentMatches($data['source'], $matches);
 
         ScannerGuardAgent::query()->updateOrCreate(['source' => $data['source']], [
             'version' => $data['version'] ?? null,

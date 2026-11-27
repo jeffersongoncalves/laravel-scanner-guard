@@ -8,7 +8,9 @@ use Carbon\CarbonInterface;
 use Carbon\CarbonPeriod;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\Response;
+use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -19,7 +21,10 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use JeffersonGoncalves\ScannerGuard\Contracts\DenylistSink;
+use JeffersonGoncalves\ScannerGuard\Events\AgentEventRecorded;
 use JeffersonGoncalves\ScannerGuard\Jobs\SyncDenylist;
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentEvent;
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentMetric;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentRule;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBlocklistEntry;
@@ -39,6 +44,9 @@ class ScannerGuard
 {
     /** Whether the add_evidence migration ran, checked once per process. */
     protected ?bool $hasEvidenceColumn = null;
+
+    /** @var array<class-string, bool> see hasTable() */
+    protected array $tables = [];
 
     public function cache(): Repository
     {
@@ -166,6 +174,100 @@ class ScannerGuard
         }
 
         return $rules;
+    }
+
+    /**
+     * Aborts with 403 unless the request carries a valid agent signature (fresh
+     * timestamp, HMAC of the body with the claimed source's secret). Returns the
+     * signature, for the nonce check once the payload validates.
+     */
+    public function verifyAgentRequest(Request $request): string
+    {
+        $timestamp = (string) $request->header('X-Timestamp');
+        $signature = (string) $request->header('X-Signature');
+        $tolerance = (int) config('scanner-guard.http.tolerance', 300);
+        $secret = $this->secretFor($request->json('source'));
+
+        abort_unless(
+            filled($secret)
+                && ctype_digit($timestamp)
+                && abs(now()->timestamp - (int) $timestamp) <= $tolerance
+                && hash_equals($this->sign($timestamp, $request->getContent(), $secret), $signature),
+            403
+        );
+
+        return $signature;
+    }
+
+    /**
+     * Stores an event of a scanner-guard-agent report rule and fires
+     * AgentEventRecorded. Null without the table (migration not run).
+     *
+     * @param  array<string, string>  $fields
+     */
+    public function recordAgentEvent(string $source, string $rule, string $ip, ?string $pattern, array $fields, ?string $line, bool $ignored, CarbonInterface $at): ?ScannerGuardAgentEvent
+    {
+        if (! $this->hasTable(ScannerGuardAgentEvent::class)) {
+            return null;
+        }
+
+        $ipHash = $this->hashIp($ip);
+        $fingerprint = ScannerGuardAgentEvent::fingerprint($rule, $ipHash, $fields);
+        $details = (bool) config('scanner-guard.store_details', false);
+
+        $event = ScannerGuardAgentEvent::query()->create([
+            'source' => $source,
+            'rule' => $rule,
+            'ip_hash' => $ipHash,
+            'ip' => $details ? $ip : null,
+            'pattern' => $pattern,
+            'fields' => $fields,
+            'line' => $details ? $line : null,
+            'ignored' => $ignored,
+            'fingerprint' => $fingerprint,
+            'first_seen' => ! ScannerGuardAgentEvent::query()->where('fingerprint', $fingerprint)->exists(),
+            'occurred_at' => $at,
+        ]);
+
+        AgentEventRecorded::dispatch($event);
+
+        return $event;
+    }
+
+    /**
+     * Adds a heartbeat's matches (per rule) to the current hour of its source.
+     * Nothing without the table.
+     *
+     * @param  array<string, int>  $matches
+     */
+    public function recordAgentMatches(string $source, array $matches): void
+    {
+        $matches = array_filter($matches, fn (int $n): bool => $n > 0);
+
+        if ($matches === [] || ! $this->hasTable(ScannerGuardAgentMetric::class)) {
+            return;
+        }
+
+        $hour = now()->startOfHour();
+
+        foreach ($matches as $rule => $n) {
+            $key = ['source' => $source, 'rule' => (string) $rule, 'hour' => $hour];
+
+            // ponytail: update-then-insert; one heartbeat a minute per source never races itself.
+            if (ScannerGuardAgentMetric::query()->where($key)->increment('matches', $n) === 0) {
+                ScannerGuardAgentMetric::query()->create($key + ['matches' => $n]);
+            }
+        }
+    }
+
+    /**
+     * Whether a model's table exists (its migration ran), checked once per process.
+     *
+     * @param  class-string<Model>  $model
+     */
+    public function hasTable(string $model): bool
+    {
+        return $this->tables[$model] ??= rescue(fn (): bool => Schema::hasTable((new $model)->getTable()), false, report: false);
     }
 
     /**
