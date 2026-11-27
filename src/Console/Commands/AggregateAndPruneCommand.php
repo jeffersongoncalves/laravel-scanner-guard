@@ -8,6 +8,8 @@ use Carbon\CarbonPeriod;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentEvent;
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentMetric;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
 
@@ -19,7 +21,7 @@ use JeffersonGoncalves\ScannerGuard\ScannerGuard;
  *     yesterday against the ban rows still present — never lowering a
  *     counter, since deleted rows can't be recounted;
  *  2. purges expired bans once their day has been reconciled;
- *  3. prunes ban rows past retention_days.
+ *  3. prunes ban rows, agent events and agent metrics past retention_days.
  */
 class AggregateAndPruneCommand extends Command
 {
@@ -131,5 +133,16 @@ class AggregateAndPruneCommand extends Command
         ScannerGuardBan::query()
             ->where('expires_at', '<', now()->subDays($days))
             ->delete();
+
+        // Agent events and hourly metrics: retention_days, no escalation to keep.
+        $cutoff = now()->subDays((int) config('scanner-guard.retention_days', 90));
+
+        if ($scannerGuard->hasTable(ScannerGuardAgentEvent::class)) {
+            ScannerGuardAgentEvent::query()->where('occurred_at', '<', $cutoff)->delete();
+        }
+
+        if ($scannerGuard->hasTable(ScannerGuardAgentMetric::class)) {
+            ScannerGuardAgentMetric::query()->where('hour', '<', $cutoff)->delete();
+        }
     }
 }

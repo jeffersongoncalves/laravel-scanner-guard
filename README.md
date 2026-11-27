@@ -617,6 +617,51 @@ server: the central app can tune a rule, never make an agent read another file. 
 left out, and the agents keep their own values. Without the migration the key is absent and the
 agents keep the last settings they received.
 
+##### Attack counts per server and hour
+
+Agents 2.6.0+ add `matches` to the heartbeat: matching log lines per rule since the last heartbeat.
+Run the `create_scanner_guard_agent_metrics_table` migration and the central app sums them per
+source, rule and hour in `scanner_guard_agent_metrics`, e.g. to chart the attacks on each server:
+
+```php
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentMetric;
+
+ScannerGuardAgentMetric::query()
+    ->where('hour', '>=', now()->subDay())
+    ->selectRaw('source, rule, sum(matches) as total')
+    ->groupBy('source', 'rule')
+    ->get();
+```
+
+Without the migration the counts are dropped and the heartbeat works as before.
+
+##### Agent events (SSH logins and other news)
+
+An agent rule with `report: true` (2.6.0+) never bans: each match is an event, POSTed to
+`{http.server.path}/events` and signed like a ban, e.g. every accepted SSH login with its user and
+key. Run the `create_scanner_guard_agent_events_table` migration; until then the endpoint answers
+`404` and the agents keep the events in their own log. Each row of `scanner_guard_agent_events`
+holds `source`, `rule`, `ip_hash`, `fields` (the rule's named groups: `user`, `key`, ...), `ignored`
+(the IP is on an ignore list) and `occurred_at`. The raw `ip` and the log `line` are only stored,
+encrypted, with `store_details` on, like a ban's.
+
+An agent sends the same event (rule, IP and fields) at most once a day. `first_seen` is true the
+first time the central app ever gets it: a login from an IP, or with a key, never seen before. Every
+stored event fires `AgentEventRecorded`, so alerting is a listener away:
+
+```php
+use Illuminate\Support\Facades\Event;
+use JeffersonGoncalves\ScannerGuard\Events\AgentEventRecorded;
+
+Event::listen(function (AgentEventRecorded $recorded): void {
+    if ($recorded->event->first_seen && ! $recorded->event->ignored) {
+        // notify: new login on {$recorded->event->source} as {$recorded->event->fields['user']}
+    }
+});
+```
+
+`scanner-guard:aggregate-and-prune` deletes events and hourly counts older than `retention_days`.
+
 ## Configuration
 
 ```php

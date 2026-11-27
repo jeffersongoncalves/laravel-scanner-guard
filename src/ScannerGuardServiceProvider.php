@@ -10,6 +10,7 @@ use JeffersonGoncalves\ScannerGuard\Console\Commands\AggregateAndPruneCommand;
 use JeffersonGoncalves\ScannerGuard\Console\Commands\PullDenylistCommand;
 use JeffersonGoncalves\ScannerGuard\Console\Commands\SyncDenylistCommand;
 use JeffersonGoncalves\ScannerGuard\Http\Controllers\DenylistController;
+use JeffersonGoncalves\ScannerGuard\Http\Controllers\RecordAgentEventController;
 use JeffersonGoncalves\ScannerGuard\Http\Controllers\RecordAgentHeartbeatController;
 use JeffersonGoncalves\ScannerGuard\Http\Controllers\RecordForwardedBanController;
 use JeffersonGoncalves\ScannerGuard\Http\Middleware\BlockScannerRequests;
@@ -32,6 +33,8 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
             ->hasMigration('add_details_to_scanner_guard_bans_table')
             ->hasMigration('add_evidence_to_scanner_guard_bans_table')
             ->hasMigration('create_scanner_guard_agent_rules_table')
+            ->hasMigration('create_scanner_guard_agent_events_table')
+            ->hasMigration('create_scanner_guard_agent_metrics_table')
             ->hasCommands([
                 SyncDenylistCommand::class,
                 AggregateAndPruneCommand::class,
@@ -58,6 +61,7 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
             Route::post($path, RecordForwardedBanController::class)->name('scanner-guard.bans.store');
             Route::get($path, DenylistController::class)->name('scanner-guard.bans.index');
             Route::post("{$path}/heartbeat", RecordAgentHeartbeatController::class)->name('scanner-guard.agents.heartbeat');
+            Route::post("{$path}/events", RecordAgentEventController::class)->name('scanner-guard.agents.events');
         }
 
         $this->app->booted(function (): void {
