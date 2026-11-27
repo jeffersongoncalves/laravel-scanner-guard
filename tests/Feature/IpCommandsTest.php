@@ -2,10 +2,13 @@
 
 declare(strict_types=1);
 
+use Illuminate\Process\Exceptions\ProcessTimedOutException;
 use Illuminate\Support\Facades\Process;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBlocklistEntry;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
+use Symfony\Component\Process\Exception\ProcessTimedOutException as SymfonyTimedOut;
+use Symfony\Component\Process\Process as SymfonyProcess;
 
 function ipList(string $contents): string
 {
@@ -27,6 +30,29 @@ it('imports bans, compressing IPv6 and skipping the never-block list', function 
     expect($sg->isBanned('2001:db8::1'))->toBeTrue()
         ->and($sg->isBanned('203.0.113.5'))->toBeTrue()
         ->and(ScannerGuardBan::query()->pluck('reason')->unique()->all())->toBe([ScannerGuardBan::REASON_MANUAL]);
+});
+
+it('counts a ban without an audit row as new with the cache driver', function () {
+    config(['scanner-guard.driver' => 'cache']);
+
+    $this->artisan('scanner-guard:import', ['file' => ipList("203.0.113.5\n")])
+        ->expectsOutputToContain('1 new, 0 existing, 0 invalid, 0 ignored')
+        ->assertSuccessful();
+
+    expect(app(ScannerGuard::class)->isBanned('203.0.113.5'))->toBeTrue();
+});
+
+it('keeps listing the other IPs when a whois lookup times out', function () {
+    Process::fake(fn () => throw new ProcessTimedOutException(
+        new SymfonyTimedOut(new SymfonyProcess(['whois']), SymfonyTimedOut::TYPE_GENERAL),
+        Process::result(),
+    ));
+
+    $this->artisan('scanner-guard:whois', ['network' => '203.0.113.9'])
+        ->expectsTable(['IP', 'Bans', 'Reasons', 'Owner', 'Network', 'Country'], [
+            ['203.0.113.9', 0, '', '(whois timed out)', '', ''],
+        ])
+        ->assertSuccessful();
 });
 
 it('imports block and ignore entries, refusing ranges wider than /8', function () {
@@ -52,7 +78,8 @@ it('rejects an unknown --as and an unreadable file', function () {
 });
 
 it('groups stored ban IPs by /24 and /16, flagging blocked ranges', function () {
-    config(['scanner-guard.store_details' => true, 'scanner-guard.ip_blocklist' => ['203.0.113.0/24']]);
+    // 203.0.0.0 alone blocks only one address of the /16, so that range is not "blocked".
+    config(['scanner-guard.store_details' => true, 'scanner-guard.ip_blocklist' => ['203.0.113.0/24', '203.0.0.0']]);
     $sg = app(ScannerGuard::class);
 
     foreach (['203.0.113.1', '203.0.113.2', '203.0.113.3', '203.0.5.1'] as $ip) {
