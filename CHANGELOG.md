@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.7.1 - 2026-11-27
+
+- `scanner-guard:import --as=ban`: counts a ban applied without an audit row (cache and http drivers) as new, checking the ignore list itself. (#61)
+- `scanner-guard:import --as=block|ignore`: refreshes the blocklist cache even when the import fails midway.
+- `scanner-guard:ban-report`: marks a range as blocked only when one entry covers all of it.
+- `scanner-guard:whois`: a timed-out lookup becomes an error row instead of aborting the report.
+
 ## 2.7.0 - 2026-11-27
 
 - `scanner-guard:import {file} --as=ban|block|ignore`: load a list of IPs or CIDRs as bans (reason `manual`), blocklist or ignore entries. (#60)
@@ -50,6 +57,7 @@ $ban->evidence; // ['<ip> - [25/Nov/2026:22:19:53 -0300] "GET /.env.staging HTTP
 
 
 
+
 ```
 - Up to 20 lines of 1024 characters per ban; anything else is refused with `422`.
 - Hidden from `toArray()` / `toJson()`, like `ip`. The lines come from the attacker (query strings, User-Agents): escape them when displaying them.
@@ -87,6 +95,7 @@ A config published earlier has no line reading the new env. Add it to its `http`
 
 ```php
 'require_signed_response' => env('SCANNER_GUARD_HTTP_REQUIRE_SIGNED_RESPONSE', false),
+
 
 
 
@@ -149,6 +158,7 @@ php artisan migrate
 
 
 
+
 ```
 A config published earlier still defaults `purge_expired_after_days` to `0`: update that line, or set `SCANNER_GUARD_PURGE_EXPIRED_AFTER_DAYS`, to keep the history. After rotating `APP_KEY`, keep the old key in `APP_PREVIOUS_KEYS` to read stored IPs.
 
@@ -175,6 +185,7 @@ Publish and run the new migration on the central app:
 ```bash
 php artisan vendor:publish --tag="scanner-guard-migrations"
 php artisan migrate
+
 
 
 
@@ -333,6 +344,7 @@ php artisan migrate
 
 
 
+
 ```
 It is a no-op when `scanner_guard_blocklist` already exists, so apps that ran the one from `filament-scanner-guard` keep their rows. Rolling it back keeps the table for the same reason. Nothing else is required; without the migration the package keeps working from the config lists.
 
@@ -403,6 +415,7 @@ php artisan migrate
 
 
 
+
 ```
 ## 1.4.0 - 2026-10-28
 
@@ -454,6 +467,7 @@ Stats written by earlier releases are keyed by expiry day. Run once right after 
 
 ```bash
 php artisan scanner-guard:aggregate-and-prune --rebuild
+
 
 
 
