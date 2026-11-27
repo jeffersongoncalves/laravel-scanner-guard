@@ -687,6 +687,46 @@ Event::listen(function (AgentEventRecorded $recorded): void {
 
 `scanner-guard:aggregate-and-prune` deletes events and hourly counts older than `retention_days`.
 
+##### Optional nginx rules, turned on for every server
+
+The nginx rules of scanner-guard-agent include four that ship off because they block more: `cms`
+(WordPress, Joomla, phpMyAdmin paths), `rfi`, `encoded` and `empty-agent`. Run the
+`create_scanner_guard_agent_nginx_rules_table` migration and turn one on for every agent, but the
+servers listed in `except`:
+
+```php
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentNginxRule;
+
+ScannerGuardAgentNginxRule::query()->create(['name' => 'cms', 'enabled' => true, 'except' => ['wp-server']]);
+```
+
+Each agent's pull then carries its list, `"nginx_rules": ["cms"]`, and agents 2.8.0+ write those rules
+into the files their `scanner-guard-rules.conf` includes, test with `nginx -t` and reload. Only names
+travel: the rules ship with the agent, so the central app can't write nginx config on a server. An
+empty list turns them all off; without the migration the key is absent and the agents keep theirs.
+`ScannerGuardAgentNginxRule::NAMES` lists the names, with what each one blocks.
+
+##### Diagnosing a client's IP on every server
+
+When a client can't reach a site, ask the agents (2.8.0+) whether anything on their server blocks
+the IP. Run the `create_scanner_guard_agent_diagnostics_table` migration, then:
+
+```php
+use JeffersonGoncalves\ScannerGuard\Facades\ScannerGuard;
+
+$diagnoses = ScannerGuard::requestDiagnosis('203.0.113.7', ['vps-01', 'vps-02'], capture: 60);
+```
+
+Each agent gets its request in the next pull (`"diagnostics": [{"id": 7, "ip": "203.0.113.7", "capture":
+60}]`), runs `scanner-guard-agent diagnose` (every firewall, fail2ban, the nginx denylists and 403
+log, the logs, the route, and a `tcpdump` of `capture` seconds, at most 120), and POSTs the report,
+signed, to `{http.server.path}/diagnostics`. It lands in `report` on the row (`ip` and `report` are
+encrypted), with `completed_at`; `status()` says `waiting`, `running`, `done` or `expired`. A request
+sent but not answered is sent again after 10 minutes, and dropped after an hour (an agent that is
+down). The central app only sends an IP and a capture length, never a command; an agent with
+`central.diagnose: false` answers that diagnoses are off. `scanner-guard:aggregate-and-prune` deletes
+diagnoses older than `retention_days`.
+
 ## Configuration
 
 ```php

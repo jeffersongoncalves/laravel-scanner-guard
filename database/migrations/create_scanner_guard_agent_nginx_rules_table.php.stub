@@ -1,0 +1,26 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('scanner_guard_agent_nginx_rules', function (Blueprint $table) {
+            $table->id();
+            // One of ScannerGuardAgentNginxRule::NAMES: the rules ship with the agent.
+            $table->string('name', 30)->unique();
+            $table->boolean('enabled')->default(false);
+            // Sources (servers) that keep it off.
+            $table->json('except')->nullable();
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('scanner_guard_agent_nginx_rules');
+    }
+};

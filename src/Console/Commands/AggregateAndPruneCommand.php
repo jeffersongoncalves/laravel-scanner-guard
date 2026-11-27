@@ -8,6 +8,7 @@ use Carbon\CarbonPeriod;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentDiagnosis;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentEvent;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentMetric;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
@@ -143,6 +144,10 @@ class AggregateAndPruneCommand extends Command
 
         if ($scannerGuard->hasTable(ScannerGuardAgentMetric::class)) {
             ScannerGuardAgentMetric::query()->where('hour', '<', $cutoff)->delete();
+        }
+
+        if ($scannerGuard->hasTable(ScannerGuardAgentDiagnosis::class)) {
+            ScannerGuardAgentDiagnosis::query()->where('created_at', '<', $cutoff)->delete();
         }
     }
 }

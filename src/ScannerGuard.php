@@ -23,8 +23,10 @@ use InvalidArgumentException;
 use JeffersonGoncalves\ScannerGuard\Contracts\DenylistSink;
 use JeffersonGoncalves\ScannerGuard\Events\AgentEventRecorded;
 use JeffersonGoncalves\ScannerGuard\Jobs\SyncDenylist;
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentDiagnosis;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentEvent;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentMetric;
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentNginxRule;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentRule;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBlocklistEntry;
@@ -125,9 +127,12 @@ class ScannerGuard
      * Central side of the pull: active bans whose raw IP is still cached (one
      * per IP, latest expiry) plus the static lists.
      *
-     * @return array{bans: list<array{ip: string, reason: string, expires_at: string}>, ip_blocklist: list<string>, user_agent_patterns: list<string>, ignore: list<string>, agent_rules?: object}
+     * With the source asking (an agent's pull), it also carries what is meant for
+     * that agent: its optional nginx rules and the diagnoses waiting for it.
+     *
+     * @return array{bans: list<array{ip: string, reason: string, expires_at: string}>, ip_blocklist: list<string>, user_agent_patterns: list<string>, ignore: list<string>, agent_rules?: object, nginx_rules?: list<string>, diagnostics?: list<array{id: int, ip: string, capture: int}>}
      */
-    public function denylist(): array
+    public function denylist(?string $source = null): array
     {
         $bans = [];
         $ignore = $this->ipIgnore();
@@ -155,7 +160,77 @@ class ScannerGuard
             $denylist['agent_rules'] = (object) $rules;
         }
 
+        if ($source === null) {
+            return $denylist;
+        }
+
+        // Absent until each migration ran: agents then keep what they have.
+        if ($this->hasTable(ScannerGuardAgentNginxRule::class)) {
+            $denylist['nginx_rules'] = ScannerGuardAgentNginxRule::query()->orderBy('name')->get()
+                ->filter(fn (ScannerGuardAgentNginxRule $rule): bool => $rule->appliesTo($source))
+                ->pluck('name')->values()->all();
+        }
+
+        if ($this->hasTable(ScannerGuardAgentDiagnosis::class)) {
+            $denylist['diagnostics'] = $this->dueDiagnoses($source);
+        }
+
         return $denylist;
+    }
+
+    /**
+     * The diagnoses waiting for source, marked as sent.
+     *
+     * @return list<array{id: int, ip: string, capture: int}>
+     */
+    protected function dueDiagnoses(string $source): array
+    {
+        $due = ScannerGuardAgentDiagnosis::query()->due()->where('source', $source)->orderBy('id')->get();
+
+        if ($due->isNotEmpty()) {
+            ScannerGuardAgentDiagnosis::query()->whereKey($due->modelKeys())->update(['sent_at' => now()]);
+        }
+
+        return $due->map(fn (ScannerGuardAgentDiagnosis $d): array => ['id' => $d->id, 'ip' => $d->ip, 'capture' => $d->capture])->values()->all();
+    }
+
+    /**
+     * Asks each source's agent for a diagnosis of ip (scanner-guard-agent
+     * diagnose), with a tcpdump capture of $capture seconds. The agents pick it
+     * up in their next pull and post the report back.
+     *
+     * @param  list<string>  $sources
+     * @return Collection<int, ScannerGuardAgentDiagnosis>
+     */
+    public function requestDiagnosis(string $ip, array $sources, int $capture = 0): Collection
+    {
+        if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+            throw new InvalidArgumentException("Not an IP address: {$ip}");
+        }
+
+        if ($capture < 0 || $capture > ScannerGuardAgentDiagnosis::MAX_CAPTURE) {
+            throw new InvalidArgumentException('The capture must be 0 to '.ScannerGuardAgentDiagnosis::MAX_CAPTURE.' seconds.');
+        }
+
+        return collect(array_values(array_unique($sources)))->map(fn (string $source): ScannerGuardAgentDiagnosis => ScannerGuardAgentDiagnosis::query()->create([
+            'source' => $source,
+            'ip' => $this->canonicalIp($ip),
+            'capture' => $capture,
+        ]));
+    }
+
+    /**
+     * Stores the report an agent sent for one of its diagnoses. False when no
+     * open diagnosis of that source has the id.
+     */
+    public function recordDiagnosis(string $source, int $id, string $report): bool
+    {
+        return ScannerGuardAgentDiagnosis::query()
+            ->whereKey($id)
+            ->where('source', $source)
+            ->whereNull('completed_at')
+            ->first()
+            ?->update(['report' => $report, 'completed_at' => now()]) ?? false;
     }
 
     /**
