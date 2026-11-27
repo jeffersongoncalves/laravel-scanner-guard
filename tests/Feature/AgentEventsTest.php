@@ -56,7 +56,7 @@ it('stores a signed event, marks the first one and fires AgentEventRecorded', fu
         ->and($events[0]->source)->toBe('vps-01')
         ->and($events[0]->rule)->toBe('ssh_login')
         ->and($events[0]->ip_hash)->toBe(app(ScannerGuard::class)->hashIp('203.0.113.9'))
-        ->and($events[0]->fields)->toBe(['user' => 'deploy', 'method' => 'publickey', 'key' => 'SHA256:abc'])
+        ->and($events[0]->fields)->toEqual(['user' => 'deploy', 'method' => 'publickey', 'key' => 'SHA256:abc']) // MySQL JSON reorders keys
         ->and($events[0]->occurred_at->toIso8601String())->toBe('2026-11-26T20:00:00+00:00');
 
     Event::assertDispatchedTimes(AgentEventRecorded::class, 3);
