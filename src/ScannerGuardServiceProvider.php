@@ -7,8 +7,11 @@ namespace JeffersonGoncalves\ScannerGuard;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Route;
 use JeffersonGoncalves\ScannerGuard\Console\Commands\AggregateAndPruneCommand;
+use JeffersonGoncalves\ScannerGuard\Console\Commands\BanReportCommand;
+use JeffersonGoncalves\ScannerGuard\Console\Commands\ImportCommand;
 use JeffersonGoncalves\ScannerGuard\Console\Commands\PullDenylistCommand;
 use JeffersonGoncalves\ScannerGuard\Console\Commands\SyncDenylistCommand;
+use JeffersonGoncalves\ScannerGuard\Console\Commands\WhoisCommand;
 use JeffersonGoncalves\ScannerGuard\Http\Controllers\DenylistController;
 use JeffersonGoncalves\ScannerGuard\Http\Controllers\RecordAgentEventController;
 use JeffersonGoncalves\ScannerGuard\Http\Controllers\RecordAgentHeartbeatController;
@@ -39,6 +42,9 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
                 SyncDenylistCommand::class,
                 AggregateAndPruneCommand::class,
                 PullDenylistCommand::class,
+                ImportCommand::class,
+                BanReportCommand::class,
+                WhoisCommand::class,
             ]);
     }
 

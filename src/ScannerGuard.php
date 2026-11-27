@@ -59,6 +59,18 @@ class ScannerGuard
     }
 
     /**
+     * hashIp() hashes the text as-is and web servers report IPv6 compressed
+     * ("2001:db8::1"), so a typed "2001:0db8::0001" must be compressed too or
+     * its ban never matches. Not an IP: returned unchanged.
+     */
+    public function canonicalIp(string $ip): string
+    {
+        $packed = @inet_pton($ip);
+
+        return $packed === false ? $ip : (string) inet_ntop($packed);
+    }
+
+    /**
      * "database" (default), "http" (forward bans to a central app) or
      * "cache" (cache-only bans, no audit trail/stats).
      */

@@ -41,6 +41,9 @@ class ScannerGuardBan extends Model
 
     public const REASON_USER_AGENT = 'user_agent';
 
+    /** Banned by hand: the panel's "Ban IP" action and scanner-guard:import. */
+    public const REASON_MANUAL = 'manual';
+
     public $timestamps = false;
 
     protected $fillable = [

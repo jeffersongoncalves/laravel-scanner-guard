@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Facade;
 /**
  * @method static \Illuminate\Contracts\Cache\Repository cache()
  * @method static string hashIp(string $ip)
+ * @method static string canonicalIp(string $ip)
+ * @method static bool isValidRange(string $entry)
  * @method static bool isBanned(string $ip)
  * @method static string|null matchScannerPath(string $path)
  * @method static bool isAsnBlocked(string|null $asn)
