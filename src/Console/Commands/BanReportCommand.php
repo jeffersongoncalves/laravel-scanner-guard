@@ -79,7 +79,7 @@ class BanReportCommand extends Command
                     count($g['sources']),
                     implode(', ', array_keys($g['reasons'])),
                     $g['first']->format('Y-m-d').' to '.$g['last']->format('Y-m-d'),
-                    IpUtils::checkIp(explode('/', $net)[0], $blocklist) ? 'yes' : '',
+                    $this->covered($net, $len, $blocklist) ? 'yes' : '',
                 ]);
 
             $this->components->info("/{$len} ranges with {$min}+ IPs");
@@ -87,5 +87,24 @@ class BanReportCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * A blocklist IPv4 entry as wide as the range or wider that holds its base
+     * address: a narrower one (a /32, a /25 of a /24) blocks only part of it.
+     *
+     * @param  list<string>  $blocklist
+     */
+    private function covered(string $net, int $len, array $blocklist): bool
+    {
+        $base = explode('/', $net)[0];
+
+        foreach ($blocklist as $entry) {
+            if (! str_contains($entry, ':') && (int) (explode('/', $entry, 2)[1] ?? 32) <= $len && IpUtils::checkIp($base, $entry)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

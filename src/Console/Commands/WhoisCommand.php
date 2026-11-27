@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace JeffersonGoncalves\ScannerGuard\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Process\Exceptions\ProcessTimedOutException;
 use Illuminate\Support\Facades\Process;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use Symfony\Component\HttpFoundation\IpUtils;
@@ -59,7 +60,11 @@ class WhoisCommand extends Command
     /** @return array{string, string, string} owner, network name and country */
     private function whois(string $ip): array
     {
-        $result = Process::timeout(15)->run(['whois', $ip]);
+        try {
+            $result = Process::timeout(15)->run(['whois', $ip]);
+        } catch (ProcessTimedOutException) {
+            return ['(whois timed out)', '', ''];
+        }
 
         if (! $result->successful() && $result->output() === '') {
             return ['(whois failed: '.trim($result->errorOutput()).')', '', ''];

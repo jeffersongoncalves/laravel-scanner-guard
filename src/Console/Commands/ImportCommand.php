@@ -58,35 +58,40 @@ class ImportCommand extends Command
 
                 if ($scannerGuard->isBanned($ip)) {
                     $count['existing']++;
-                } elseif ($scannerGuard->ban($ip, ScannerGuardBan::REASON_MANUAL, 'import', 0) === null) {
-                    $count['ignored']++; // in the never-block list, or not the database driver
+                } elseif ($scannerGuard->isIpIgnored($ip)) {
+                    $count['ignored']++;
                 } else {
+                    // null is no failure: the cache and http drivers store no row.
+                    $scannerGuard->ban($ip, ScannerGuardBan::REASON_MANUAL, 'import', 0);
                     $count['new']++;
                 }
             }
         } else {
             $type = $as === 'block' ? ScannerGuardBlocklistEntry::TYPE_IP : ScannerGuardBlocklistEntry::TYPE_IGNORE;
 
-            // Without events: every save re-syncs the sinks; sync once at the end.
-            ScannerGuardBlocklistEntry::withoutEvents(function () use ($scannerGuard, $values, $type, &$count): void {
-                foreach ($values as $value) {
-                    if (! $this->validNetwork($scannerGuard, $value)) {
-                        $this->invalid($value, $count);
+            try {
+                // Without events: every save re-syncs the sinks; sync once at the end.
+                ScannerGuardBlocklistEntry::withoutEvents(function () use ($scannerGuard, $values, $type, &$count): void {
+                    foreach ($values as $value) {
+                        if (! $this->validNetwork($scannerGuard, $value)) {
+                            $this->invalid($value, $count);
 
-                        continue;
+                            continue;
+                        }
+
+                        $entry = ScannerGuardBlocklistEntry::query()->firstOrCreate(
+                            ['type' => $type, 'value' => $value],
+                            ['note' => $this->option('note')],
+                        );
+
+                        $count[$entry->wasRecentlyCreated ? 'new' : 'existing']++;
                     }
-
-                    $entry = ScannerGuardBlocklistEntry::query()->firstOrCreate(
-                        ['type' => $type, 'value' => $value],
-                        ['note' => $this->option('note')],
-                    );
-
-                    $count[$entry->wasRecentlyCreated ? 'new' : 'existing']++;
+                });
+            } finally {
+                // Also after a failure midway: the rows already written must reach the cache and sinks.
+                if ($count['new'] > 0) {
+                    $scannerGuard->blocklistChanged();
                 }
-            });
-
-            if ($count['new'] > 0) {
-                $scannerGuard->blocklistChanged();
             }
         }
 
