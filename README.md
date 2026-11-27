@@ -245,6 +245,31 @@ and the error is reported.
 The migration skips creating the table when it already exists, so apps that ran the one from
 `filament-scanner-guard` keep their rows. For the same reason, rolling it back keeps the table.
 
+To load a list (one IP or CIDR per line, first column, `#` comments):
+
+```bash
+php artisan scanner-guard:import bots.txt                  # bans each IP (reason "manual")
+php artisan scanner-guard:import ranges.txt --as=block --note="Cloudflare report"
+php artisan scanner-guard:import partners.txt --as=ignore  # never block
+```
+
+Ranges wider than `/8` (IPv4) or `/16` (IPv6) are refused, and a ban of an IP in the ignore list is
+skipped. The sinks are synced once at the end.
+
+### Finding bot networks
+
+With `store_details` on (only those bans keep the IP), two commands help decide which ranges are
+worth blocking as a whole:
+
+```bash
+php artisan scanner-guard:ban-report --min=3 --days=30 --reason=ssh_bruteforce
+php artisan scanner-guard:whois 203.0.113.0/24 --limit=10
+```
+
+`ban-report` groups the banned IPv4 addresses by `/24` and `/16` (IPs, bans, sources, reasons,
+period) and flags the ranges already in the blocklist. `whois` lists the banned IPs of a range with
+their owner, network name and country; it needs the `whois` binary on the server.
+
 ### Unbanning
 
 ```php
