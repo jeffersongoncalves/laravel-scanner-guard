@@ -30,7 +30,7 @@ class DenylistController
             403
         );
 
-        $response = response()->json($scannerGuard->denylist());
+        $response = response()->json($scannerGuard->denylist($source));
         $timestamp = (string) now()->timestamp;
 
         return $response->withHeaders([
