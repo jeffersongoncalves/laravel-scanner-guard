@@ -1,0 +1,67 @@
+<?php
+
+use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('scanner_guard_diagnosis_requests', function (Blueprint $table) {
+            $table->id();
+            // Encrypted, like the diagnoses' copy each agent gets.
+            $table->text('ip');
+            $table->unsignedSmallInteger('capture')->default(0);
+            // Who asked, as it read then: the user may be renamed or deleted later.
+            $table->string('requested_by')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::table('scanner_guard_agent_diagnostics', function (Blueprint $table) {
+            $table->foreignId('request_id')->nullable()->after('id')
+                ->constrained('scanner_guard_diagnosis_requests')->cascadeOnDelete();
+        });
+
+        $this->groupExistingDiagnoses();
+    }
+
+    public function down(): void
+    {
+        Schema::table('scanner_guard_agent_diagnostics', function (Blueprint $table) {
+            $table->dropConstrainedForeignId('request_id');
+        });
+
+        Schema::dropIfExists('scanner_guard_diagnosis_requests');
+    }
+
+    /**
+     * One request per IP asked of several servers at once (same IP, capture
+     * and second). A row whose IP no longer decrypts stays without one.
+     */
+    protected function groupExistingDiagnoses(): void
+    {
+        $requests = [];
+
+        foreach (DB::table('scanner_guard_agent_diagnostics')->orderBy('id')->get() as $row) {
+            try {
+                $ip = Crypt::decryptString($row->ip);
+            } catch (DecryptException) {
+                continue;
+            }
+
+            $key = "{$row->created_at}|{$row->capture}|{$ip}";
+            $requests[$key] ??= DB::table('scanner_guard_diagnosis_requests')->insertGetId([
+                'ip' => $row->ip,
+                'capture' => $row->capture,
+                'created_at' => $row->created_at,
+                'updated_at' => $row->created_at,
+            ]);
+
+            DB::table('scanner_guard_agent_diagnostics')->where('id', $row->id)->update(['request_id' => $requests[$key]]);
+        }
+    }
+};

@@ -12,6 +12,7 @@ use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentDiagnosis;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentEvent;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentMetric;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardDiagnosisRequest;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
 
 /**
@@ -148,6 +149,10 @@ class AggregateAndPruneCommand extends Command
 
         if ($scannerGuard->hasTable(ScannerGuardAgentDiagnosis::class)) {
             ScannerGuardAgentDiagnosis::query()->where('created_at', '<', $cutoff)->delete();
+        }
+
+        if ($scannerGuard->hasTable(ScannerGuardDiagnosisRequest::class)) {
+            ScannerGuardDiagnosisRequest::query()->where('created_at', '<', $cutoff)->delete();
         }
     }
 }
