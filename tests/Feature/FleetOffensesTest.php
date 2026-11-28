@@ -1,0 +1,44 @@
+<?php
+
+declare(strict_types=1);
+
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
+use JeffersonGoncalves\ScannerGuard\ScannerGuard;
+
+beforeEach(function () {
+    config(['scanner-guard.store_details' => true, 'scanner-guard.escalation_lookback_days' => 30]);
+});
+
+function fleetBan(string $ip, string $reason, ?int $offense, string $source, int $daysAgo): void
+{
+    $bannedAt = now()->subDays($daysAgo);
+
+    // Straight to the table: recordForwardedBan() drops a second ban of the same IP within a burst.
+    ScannerGuardBan::query()->create([
+        'ip_hash' => app(ScannerGuard::class)->hashIp($ip), 'ip' => $ip, 'reason' => $reason, 'matched_value' => 'p', 'hit_count' => 3,
+        'banned_at' => $bannedAt, 'expires_at' => $bannedAt->copy()->addDay(), 'offense' => $offense, 'source' => $source,
+    ]);
+}
+
+it('sends agents each IP highest offense per reason from every server', function () {
+    fleetBan('203.0.113.7', 'ssh_bruteforce', 1, 'vps-01', 10);
+    fleetBan('203.0.113.7', 'ssh_bruteforce', 2, 'vps-02', 5);
+    fleetBan('203.0.113.7', 'ssh_bruteforce', 1, 'vps-03', 2); // latest, lower step
+    fleetBan('203.0.113.7', 'web_attack', 1, 'vps-01', 3);
+    fleetBan('203.0.113.8', 'ssh_bruteforce', 3, 'vps-01', 40); // past the lookback
+    fleetBan('203.0.113.9', 'manual', null, 'vps-01', 1);        // no escalation
+    config(['scanner-guard.ip_ignore' => ['203.0.113.10']]);
+    fleetBan('203.0.113.10', 'ssh_bruteforce', 1, 'vps-01', 1);
+
+    $offenses = collect(app(ScannerGuard::class)->denylist('vps-04')['offenses'])
+        ->mapWithKeys(fn (array $o): array => [$o['ip'].' '.$o['reason'] => [$o['offense'], substr($o['banned_at'], 0, 10)]]);
+
+    expect($offenses->all())->toBe([
+        '203.0.113.7 ssh_bruteforce' => [2, now()->subDays(2)->toDateString()],
+        '203.0.113.7 web_attack' => [1, now()->subDays(3)->toDateString()],
+    ]);
+});
+
+it('leaves the offenses out of a pull without a source', function () {
+    expect(app(ScannerGuard::class)->denylist())->not->toHaveKey('offenses');
+});
