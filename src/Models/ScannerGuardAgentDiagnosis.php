@@ -6,6 +6,7 @@ namespace JeffersonGoncalves\ScannerGuard\Models;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
 
 /**
@@ -13,6 +14,7 @@ use Illuminate\Support\Carbon;
  * agent gets it in its next pull, runs `diagnose`, and posts the report back.
  *
  * @property int $id
+ * @property int|null $request_id
  * @property string $source
  * @property string $ip
  * @property int $capture seconds of tcpdump, 0 = none
@@ -35,6 +37,7 @@ class ScannerGuardAgentDiagnosis extends Model
     protected $table = 'scanner_guard_agent_diagnostics';
 
     protected $fillable = [
+        'request_id',
         'source',
         'ip',
         'capture',
@@ -66,6 +69,17 @@ class ScannerGuardAgentDiagnosis extends Model
             ->whereNull('completed_at')
             ->where('created_at', '>', now()->subSeconds(static::EXPIRE_AFTER))
             ->where(fn (Builder $q) => $q->whereNull('sent_at')->orWhere('sent_at', '<=', now()->subSeconds(static::RESEND_AFTER)));
+    }
+
+    /**
+     * The request this diagnosis answers, with the other servers' (null
+     * before the diagnosis_requests migration).
+     *
+     * @return BelongsTo<ScannerGuardDiagnosisRequest, $this>
+     */
+    public function request(): BelongsTo
+    {
+        return $this->belongsTo(ScannerGuardDiagnosisRequest::class, 'request_id');
     }
 
     public function status(): string

@@ -42,6 +42,7 @@ class ScannerGuardServiceProvider extends PackageServiceProvider
             ->hasMigration('create_scanner_guard_agent_nginx_rules_table')
             ->hasMigration('create_scanner_guard_agent_diagnostics_table')
             ->hasMigration('add_host_to_scanner_guard_agents_table')
+            ->hasMigration('create_scanner_guard_diagnosis_requests_table')
             ->hasCommands([
                 SyncDenylistCommand::class,
                 AggregateAndPruneCommand::class,

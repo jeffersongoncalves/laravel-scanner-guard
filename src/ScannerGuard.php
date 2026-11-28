@@ -30,6 +30,7 @@ use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentNginxRule;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentRule;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBlocklistEntry;
+use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardDiagnosisRequest;
 use JeffersonGoncalves\VisitorFingerprint\Support\IpAnonymizer;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\IpUtils;
@@ -253,12 +254,14 @@ class ScannerGuard
     /**
      * Asks each source's agent for a diagnosis of ip (scanner-guard-agent
      * diagnose), with a tcpdump capture of $capture seconds. The agents pick it
-     * up in their next pull and post the report back.
+     * up in their next pull and post the report back. With the
+     * diagnosis_requests migration, the diagnoses share one request that
+     * records who asked.
      *
      * @param  list<string>  $sources
      * @return Collection<int, ScannerGuardAgentDiagnosis>
      */
-    public function requestDiagnosis(string $ip, array $sources, int $capture = 0): Collection
+    public function requestDiagnosis(string $ip, array $sources, int $capture = 0, ?string $requestedBy = null): Collection
     {
         if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
             throw new InvalidArgumentException("Not an IP address: {$ip}");
@@ -268,11 +271,20 @@ class ScannerGuard
             throw new InvalidArgumentException('The capture must be 0 to '.ScannerGuardAgentDiagnosis::MAX_CAPTURE.' seconds.');
         }
 
-        return collect(array_values(array_unique($sources)))->map(fn (string $source): ScannerGuardAgentDiagnosis => ScannerGuardAgentDiagnosis::query()->create([
-            'source' => $source,
-            'ip' => $this->canonicalIp($ip),
-            'capture' => $capture,
-        ]));
+        $ip = $this->canonicalIp($ip);
+
+        return DB::transaction(function () use ($ip, $sources, $capture, $requestedBy): Collection {
+            $request = $this->hasTable(ScannerGuardDiagnosisRequest::class)
+                ? ScannerGuardDiagnosisRequest::query()->create(['ip' => $ip, 'capture' => $capture, 'requested_by' => $requestedBy])
+                : null;
+
+            return collect(array_values(array_unique($sources)))->map(fn (string $source): ScannerGuardAgentDiagnosis => ScannerGuardAgentDiagnosis::query()->create(array_filter([
+                'request_id' => $request?->id,
+                'source' => $source,
+                'ip' => $ip,
+                'capture' => $capture,
+            ], fn ($value): bool => $value !== null)));
+        });
     }
 
     /**

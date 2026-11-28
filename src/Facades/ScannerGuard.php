@@ -28,7 +28,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static array<string, array{threshold: int, window: int, ban: list<int>}>|null agentRules()
  * @method static \JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentEvent|null recordAgentEvent(string $source, string $rule, string $ip, ?string $pattern, array $fields, ?string $line, bool $ignored, \Carbon\CarbonInterface $at)
  * @method static void recordAgentMatches(string $source, array $matches)
- * @method static \Illuminate\Support\Collection<int, \JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentDiagnosis> requestDiagnosis(string $ip, array $sources, int $capture = 0)
+ * @method static \Illuminate\Support\Collection<int, \JeffersonGoncalves\ScannerGuard\Models\ScannerGuardAgentDiagnosis> requestDiagnosis(string $ip, array $sources, int $capture = 0, string|null $requestedBy = null)
  * @method static bool recordDiagnosis(string $source, int $id, string $report)
  * @method static bool hasTable(string $model)
  * @method static void blocklistChanged()
