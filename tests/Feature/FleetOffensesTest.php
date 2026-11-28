@@ -55,7 +55,14 @@ it('keeps the history of an IP whose latest row has no raw IP to recover', funct
 it('leaves the offenses out until the add_offense migration ran', function () {
     Schema::table('scanner_guard_bans', fn (Blueprint $table) => $table->dropColumn('offense'));
 
-    expect(app(ScannerGuard::class)->denylist('vps-01'))->not->toHaveKey('offenses');
+    try {
+        expect(app(ScannerGuard::class)->denylist('vps-01'))->not->toHaveKey('offenses');
+    } finally {
+        // MySQL and PostgreSQL roll the package migrations back between tests: its down() drops this column.
+        if (! Schema::hasColumn('scanner_guard_bans', 'offense')) {
+            Schema::table('scanner_guard_bans', fn (Blueprint $table) => $table->unsignedSmallInteger('offense')->nullable());
+        }
+    }
 });
 
 it('leaves the offenses out of a pull without a source', function () {
