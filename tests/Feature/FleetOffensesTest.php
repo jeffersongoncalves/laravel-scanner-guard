@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
 use JeffersonGoncalves\ScannerGuard\Models\ScannerGuardBan;
 use JeffersonGoncalves\ScannerGuard\ScannerGuard;
 
@@ -37,6 +39,23 @@ it('sends agents each IP highest offense per reason from every server', function
         '203.0.113.7 ssh_bruteforce' => [2, now()->subDays(2)->toDateString()],
         '203.0.113.7 web_attack' => [1, now()->subDays(3)->toDateString()],
     ]);
+});
+
+it('keeps the history of an IP whose latest row has no raw IP to recover', function () {
+    fleetBan('203.0.113.7', 'ssh_bruteforce', 2, 'vps-01', 5);
+    fleetBan('203.0.113.7', 'ssh_bruteforce', 1, 'vps-02', 1);
+    // The latest row lost its IP (stored before store_details, or a rotated key).
+    ScannerGuardBan::query()->latest('banned_at')->first()->forceFill(['ip' => null])->save();
+
+    expect(app(ScannerGuard::class)->denylist('vps-03')['offenses'])->toBe([
+        ['ip' => '203.0.113.7', 'reason' => 'ssh_bruteforce', 'offense' => 2, 'banned_at' => now()->subDay()->toIso8601String()],
+    ]);
+});
+
+it('leaves the offenses out until the add_offense migration ran', function () {
+    Schema::table('scanner_guard_bans', fn (Blueprint $table) => $table->dropColumn('offense'));
+
+    expect(app(ScannerGuard::class)->denylist('vps-01'))->not->toHaveKey('offenses');
 });
 
 it('leaves the offenses out of a pull without a source', function () {

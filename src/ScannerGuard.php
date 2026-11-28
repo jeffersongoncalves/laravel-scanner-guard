@@ -175,7 +175,10 @@ class ScannerGuard
             $denylist['diagnostics'] = $this->dueDiagnoses($source);
         }
 
-        $denylist['offenses'] = $this->fleetOffenses();
+        // Absent until the add_offense migration ran: agents then keep what they have.
+        if (rescue(fn (): bool => Schema::hasColumn((new ScannerGuardBan)->getTable(), 'offense'), false, report: false)) {
+            $denylist['offenses'] = $this->fleetOffenses();
+        }
 
         return $denylist;
     }
@@ -204,23 +207,30 @@ class ScannerGuard
                 ->cursor();
 
             foreach ($bans as $ban) {
-                $ip = $ips[$ban->ip_hash] ??= $this->rawIpForBan($ban) ?? false;
-
-                if ($ip === false || IpUtils::checkIp($ip, $ignore)) {
-                    continue;
-                }
+                // Only a recovered IP is kept: a row without one must not hide an older row that has it.
+                $ips[$ban->ip_hash] ??= $this->rawIpForBan($ban);
 
                 $key = $ban->ip_hash."\0".$ban->reason;
 
                 // Latest first: the first row of a key carries the latest banned_at.
                 if (! isset($offenses[$key])) {
-                    $offenses[$key] = ['ip' => $ip, 'reason' => $ban->reason, 'offense' => (int) $ban->offense, 'banned_at' => $ban->banned_at->toIso8601String()];
+                    $offenses[$key] = ['hash' => $ban->ip_hash, 'reason' => $ban->reason, 'offense' => (int) $ban->offense, 'banned_at' => $ban->banned_at->toIso8601String()];
                 } elseif ($ban->offense > $offenses[$key]['offense']) {
                     $offenses[$key]['offense'] = (int) $ban->offense;
                 }
             }
 
-            return array_values($offenses);
+            $out = [];
+
+            foreach ($offenses as $offense) {
+                $ip = $ips[$offense['hash']] ?? null;
+
+                if ($ip !== null && ! IpUtils::checkIp($ip, $ignore)) {
+                    $out[] = ['ip' => $ip, 'reason' => $offense['reason'], 'offense' => $offense['offense'], 'banned_at' => $offense['banned_at']];
+                }
+            }
+
+            return $out;
         });
     }
 
