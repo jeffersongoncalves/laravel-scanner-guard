@@ -15,6 +15,8 @@ use Illuminate\Support\Carbon;
  * @property int $id
  * @property string $source
  * @property string|null $version
+ * @property string|null $os
+ * @property list<string>|null $addresses
  * @property list<string>|null $rules
  * @property int $active_bans
  * @property Carbon|null $started_at
@@ -32,6 +34,8 @@ class ScannerGuardAgent extends Model
     protected $fillable = [
         'source',
         'version',
+        'os',
+        'addresses',
         'rules',
         'active_bans',
         'started_at',
@@ -42,6 +46,7 @@ class ScannerGuardAgent extends Model
     {
         return [
             'rules' => 'array',
+            'addresses' => 'array',
             'active_bans' => 'integer',
             'started_at' => 'datetime',
             'last_seen_at' => 'datetime',
