@@ -175,7 +175,63 @@ class ScannerGuard
             $denylist['diagnostics'] = $this->dueDiagnoses($source);
         }
 
+        // Absent until the add_offense migration ran: agents then keep what they have.
+        if (rescue(fn (): bool => Schema::hasColumn((new ScannerGuardBan)->getTable(), 'offense'), false, report: false)) {
+            $denylist['offenses'] = $this->fleetOffenses();
+        }
+
         return $denylist;
+    }
+
+    /**
+     * Each IP's highest offense per reason within escalation_lookback_days, from
+     * every source, so an agent escalates an IP another server already banned
+     * instead of starting it over at step one. Ignored IPs and IPs whose raw IP
+     * can't be recovered are left out. Cached a minute: every agent pulls once
+     * a minute and the list is the same for all of them.
+     *
+     * @return list<array{ip: string, reason: string, offense: int, banned_at: string}>
+     */
+    public function fleetOffenses(): array
+    {
+        // ponytail: bounded by retention_days too (pruned rows are gone), raise it to keep a longer ladder.
+        return $this->cache()->remember('scanner-guard:fleet-offenses', 60, function (): array {
+            $ignore = $this->ipIgnore();
+            $ips = [];
+            $offenses = [];
+
+            $bans = ScannerGuardBan::query()
+                ->whereNotNull('offense')
+                ->where('banned_at', '>=', now()->subDays($this->escalationLookbackDays()))
+                ->orderByDesc('banned_at')
+                ->cursor();
+
+            foreach ($bans as $ban) {
+                // Only a recovered IP is kept: a row without one must not hide an older row that has it.
+                $ips[$ban->ip_hash] ??= $this->rawIpForBan($ban);
+
+                $key = $ban->ip_hash."\0".$ban->reason;
+
+                // Latest first: the first row of a key carries the latest banned_at.
+                if (! isset($offenses[$key])) {
+                    $offenses[$key] = ['hash' => $ban->ip_hash, 'reason' => $ban->reason, 'offense' => (int) $ban->offense, 'banned_at' => $ban->banned_at->toIso8601String()];
+                } elseif ($ban->offense > $offenses[$key]['offense']) {
+                    $offenses[$key]['offense'] = (int) $ban->offense;
+                }
+            }
+
+            $out = [];
+
+            foreach ($offenses as $offense) {
+                $ip = $ips[$offense['hash']] ?? null;
+
+                if ($ip !== null && ! IpUtils::checkIp($ip, $ignore)) {
+                    $out[] = ['ip' => $ip, 'reason' => $offense['reason'], 'offense' => $offense['offense'], 'banned_at' => $offense['banned_at']];
+                }
+            }
+
+            return $out;
+        });
     }
 
     /**
