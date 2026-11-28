@@ -1,0 +1,23 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table('scanner_guard_agents', function (Blueprint $table) {
+            $table->string('os', 100)->nullable()->after('version');
+            $table->json('addresses')->nullable()->after('os');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::table('scanner_guard_agents', function (Blueprint $table) {
+            $table->dropColumn(['os', 'addresses']);
+        });
+    }
+};

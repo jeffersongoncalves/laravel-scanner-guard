@@ -611,6 +611,10 @@ $agent->isOnline();
 The heartbeat is checked like a forwarded ban (signature, timestamp tolerance, replay), and its body
 is validated before it is stored.
 
+Agents 2.9.0+ also send the server's `os` (`Ubuntu 22.04.5 LTS`) and `addresses` (its interface IPs,
+internal ones included). Run the `add_host_to_scanner_guard_agents_table` migration before updating
+the agents; older agents leave both columns alone.
+
 ##### Agent rule settings, set once for every server
 
 Each agent reads its rules from its own `agent.yaml`. To change a rule's threshold, window or ban

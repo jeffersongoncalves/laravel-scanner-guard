@@ -53,6 +53,23 @@ it('records a signed heartbeat, one row per source', function () {
         ->and($agent->isOnline())->toBeTrue();
 });
 
+it('records the OS and addresses, and keeps them when an older agent leaves them out', function () {
+    postHeartbeat(heartbeat(['os' => 'Ubuntu 22.04.5 LTS', 'addresses' => ['10.2.0.251', '2001:db8::1']]))->assertNoContent();
+
+    $agent = ScannerGuardAgent::query()->sole();
+    expect($agent->os)->toBe('Ubuntu 22.04.5 LTS')
+        ->and($agent->addresses)->toBe(['10.2.0.251', '2001:db8::1']);
+
+    $this->travel(1)->minutes();
+    postHeartbeat(heartbeat())->assertNoContent();
+
+    expect($agent->refresh()->os)->toBe('Ubuntu 22.04.5 LTS')
+        ->and($agent->addresses)->toBe(['10.2.0.251', '2001:db8::1']);
+
+    postHeartbeat(heartbeat(['addresses' => ['not-an-ip']]))->assertUnprocessable();
+    postHeartbeat(heartbeat(['os' => str_repeat('x', 101)]))->assertUnprocessable();
+});
+
 it('rejects bad signatures, stale timestamps, replays and other sources secrets', function () {
     postHeartbeat(heartbeat(), 'wrong')->assertForbidden();
     postHeartbeat(heartbeat(), timestamp: now()->subMinutes(10)->timestamp)->assertForbidden();
